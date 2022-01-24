@@ -1,0 +1,87 @@
+-----------  Configuration Arguments -----------
+backend: auto
+elastic_server: None
+force: False
+gpus: 0,1,2,3
+heter_worker_num: None
+heter_workers: 
+host: None
+http_port: None
+ips: 127.0.0.1
+job_id: None
+log_dir: log
+np: None
+nproc_per_node: None
+run_mode: None
+scale: 0
+server_num: None
+servers: 
+training_script: train_admm.py
+training_script_args: ['--batch_size', '64', '--data', 'imagenet', '--pruning_mode', 'ratio', '--ratio', '0.75', '--lr', '0.01', '--model', 'MobileNet', '--num_epochs', '50', '--pretrained_model', 'MobileNetV1_pretrained', '--step_epochs', '10', '30', '--initial_ratio', '0.15', '--pruning_steps', '100', '--stable_epochs', '0', '--pruning_epochs', '54', '--tunning_epochs', '54', '--last_epoch', '-1', '--pruning_strategy', 'gmp', '--local_sparsity', 'True', '--prune_params_type', 'conv1x1_only', '--rho', '0.1']
+worker_num: None
+workers: 
+------------------------------------------------
+launch train in GPU mode!
+launch proc_id:8552 idx:0
+launch proc_id:8557 idx:1
+launch proc_id:8562 idx:2
+launch proc_id:8567 idx:3
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+-----------  Configuration Arguments -----------
+batch_size: 64
+batch_size_for_validation: 64
+checkpoint: None
+data: imagenet
+initial_ratio: 0.15
+l2_decay: 0.0005
+last_epoch: -1
+local_sparsity: 1
+log_period: 100
+lr: 0.01
+lr_strategy: piecewise_decay
+model: MobileNet
+model_path: ./admm_models_mbv1
+model_period: 10
+momentum_rate: 0.9
+num_epochs: 50
+pretrained_model: MobileNetV1_pretrained
+prune_params_type: conv1x1_only
+pruning_epochs: 54
+pruning_mode: ratio
+pruning_steps: 100
+pruning_strategy: gmp
+ratio: 0.75
+rho: 0.1
+stable_epochs: 0
+step_epochs: [10, 30]
+test_period: 5
+threshold: 0.01
+tunning_epochs: 54
+use_gpu: True
+------------------------------------------------
+
+
+API is deprecated since 2.0.0 Please use FleetAPI instead.
+WIKI: https://github.com/PaddlePaddle/Fleet/blob/develop/markdown_doc/transpiler
+
+        
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+server not ready, wait 3 sec to retry...
+not ready endpoints:['127.0.0.1:16009', '127.0.0.1:45987', '127.0.0.1:46549']
+W0120 13:18:07.129943  8552 device_context.cc:447] Please NOTE: device: 0, GPU Compute Capability: 6.1, Driver API Version: 10.1, Runtime API Version: 10.1
+W0120 13:18:07.136162  8552 device_context.cc:465] device: 0, cuDNN Version: 7.6.
+prtrained model0
+prtrained model1
+2022-01-20 13:18:13,095-INFO: Load pretrained model from MobileNetV1_pretrained
+pretrained model2

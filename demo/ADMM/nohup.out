@@ -1,0 +1,256 @@
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+/usr/local/lib/python3.7/site-packages/paddle/fluid/framework.py:312: UserWarning: You are using GPU version Paddle, but your CUDA device is not set properly. CPU device will be used by default.
+  "You are using GPU version Paddle, but your CUDA device is not set properly. CPU device will be used by default."
+WARNING 2022-01-06 12:49:22,634 launch.py:416] Not found distinct arguments and compiled with cuda or xpu. Default use collective mode
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.7/runpy.py", line 193, in _run_module_as_main
+    "__main__", mod_spec)
+  File "/usr/local/lib/python3.7/runpy.py", line 85, in _run_code
+    exec(code, run_globals)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/launch.py", line 16, in <module>
+    launch.launch()
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 615, in launch
+    launch_collective(args)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 253, in launch_collective
+    (device_mode, devices_per_proc) = launch_utils.get_device_proc_info(args)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch_utils.py", line 698, in get_device_proc_info
+    device_mode = get_device_mode(args.backend)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch_utils.py", line 693, in get_device_mode
+    raise RuntimeError("Don't supported devices")
+RuntimeError: Don't supported devices
+-----------  Configuration Arguments -----------
+backend: auto
+elastic_server: None
+force: False
+gpus: 4,5,6,7
+heter_worker_num: None
+heter_workers: 
+host: None
+http_port: None
+ips: 127.0.0.1
+job_id: None
+log_dir: log
+np: None
+nproc_per_node: None
+run_mode: None
+scale: 0
+server_num: None
+servers: 
+training_script: train.py
+training_script_args: ['--batch_size', '64', '--data', 'mnist', '--pruning_mode', 'ratio', '--ratio', '0.75', '--lr', '0.005', '--model', 'MobileNet', '--num_epochs', '108']
+worker_num: None
+workers: 
+------------------------------------------------
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+WARNING 2022-01-11 02:16:49,491 launch.py:416] Not found distinct arguments and compiled with cuda or xpu. Default use collective mode
+INFO 2022-01-11 02:16:49,493 launch_utils.py:527] Local start 4 processes. First process distributed environment info (Only For Debug): 
+    +=======================================================================================+
+    |                        Distributed Envs                      Value                    |
+    +---------------------------------------------------------------------------------------+
+    |                       PADDLE_TRAINER_ID                        0                      |
+    |                 PADDLE_CURRENT_ENDPOINT                 127.0.0.1:22936               |
+    |                     PADDLE_TRAINERS_NUM                        4                      |
+    |                PADDLE_TRAINER_ENDPOINTS  ... 0.1:26051,127.0.0.1:29204,127.0.0.1:27215|
+    |                     PADDLE_RANK_IN_NODE                        0                      |
+    |                 PADDLE_LOCAL_DEVICE_IDS                        4                      |
+    |                 PADDLE_WORLD_DEVICE_IDS                     4,5,6,7                   |
+    |                     FLAGS_selected_gpus                        4                      |
+    |             FLAGS_selected_accelerators                        4                      |
+    +=======================================================================================+
+
+INFO 2022-01-11 02:16:49,493 launch_utils.py:531] details abouts PADDLE_TRAINER_ENDPOINTS can be found in log/endpoints.log, and detail running logs maybe found in log/workerlog.0
+WARNING 2022-01-11 02:16:54,392 launch.py:311] Terminating... exit
+INFO 2022-01-11 02:16:54,393 launch_utils.py:319] terminate process group gid:31139
+INFO 2022-01-11 02:16:54,393 launch_utils.py:319] terminate process group gid:31144
+INFO 2022-01-11 02:16:54,393 launch_utils.py:319] terminate process group gid:31149
+INFO 2022-01-11 02:16:54,393 launch_utils.py:319] terminate process group gid:31154
+INFO 2022-01-11 02:16:58,397 launch_utils.py:340] terminate all the procs
+-----------  Configuration Arguments -----------
+backend: auto
+elastic_server: None
+force: False
+gpus: 4,5,6,7
+heter_worker_num: None
+heter_workers: 
+host: None
+http_port: None
+ips: 127.0.0.1
+job_id: None
+log_dir: log
+np: None
+nproc_per_node: None
+run_mode: None
+scale: 0
+server_num: None
+servers: 
+training_script: retrain_admm.py
+training_script_args: ['--batch_size', '64', '--data', 'mnist', '--pruning_mode', 'ratio', '--ratio', '0.90', '--lr', '0.001', '--model', 'MobileNet', '--pretrained_model', 'save_models', '--num_epochs', '30', '--step_epochs', '71', '88', '--initial_ratio', '0.15', '--pruning_steps', '100', '--stable_epochs', '0', '--pruning_epochs', '54', '--tunning_epochs', '54', '--last_epoch', '-1', '--pruning_strategy', 'gmp', '--local_sparsity', 'True', '--prune_params_type', 'conv1x1_only', '--rho', '0.1']
+worker_num: None
+workers: 
+------------------------------------------------
+launch train in GPU mode!
+launch proc_id:31139 idx:0
+launch proc_id:31144 idx:1
+launch proc_id:31149 idx:2
+launch proc_id:31154 idx:3
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+-----------  Configuration Arguments -----------
+batch_size: 64
+batch_size_for_validation: 64
+checkpoint: None
+data: mnist
+initial_ratio: 0.15
+l2_decay: 5e-05
+last_epoch: -1
+local_sparsity: 1
+log_period: 100
+lr: 0.001
+lr_strategy: piecewise_decay
+model: MobileNet
+model_path: ./retrain_models
+model_period: 10
+momentum_rate: 0.9
+num_epochs: 30
+pretrained_model: save_models
+prune_params_type: conv1x1_only
+pruning_epochs: 54
+pruning_mode: ratio
+pruning_steps: 100
+pruning_strategy: gmp
+ratio: 0.9
+rho: 0.1
+stable_epochs: 0
+step_epochs: [71, 88]
+test_period: 5
+threshold: 0.01
+tunning_epochs: 54
+use_gpu: True
+------------------------------------------------
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+WARNING 2022-01-11 15:46:22,496 launch.py:416] Not found distinct arguments and compiled with cuda or xpu. Default use collective mode
+INFO 2022-01-11 15:46:22,499 launch_utils.py:527] Local start 4 processes. First process distributed environment info (Only For Debug): 
+    +=======================================================================================+
+    |                        Distributed Envs                      Value                    |
+    +---------------------------------------------------------------------------------------+
+    |                       PADDLE_TRAINER_ID                        0                      |
+    |                 PADDLE_CURRENT_ENDPOINT                 127.0.0.1:59323               |
+    |                     PADDLE_TRAINERS_NUM                        4                      |
+    |                PADDLE_TRAINER_ENDPOINTS  ... 0.1:13004,127.0.0.1:53855,127.0.0.1:26847|
+    |                     PADDLE_RANK_IN_NODE                        0                      |
+    |                 PADDLE_LOCAL_DEVICE_IDS                        4                      |
+    |                 PADDLE_WORLD_DEVICE_IDS                     4,5,6,7                   |
+    |                     FLAGS_selected_gpus                        4                      |
+    |             FLAGS_selected_accelerators                        4                      |
+    +=======================================================================================+
+
+INFO 2022-01-11 15:46:22,499 launch_utils.py:531] details abouts PADDLE_TRAINER_ENDPOINTS can be found in log/endpoints.log, and detail running logs maybe found in log/workerlog.0
+WARNING 2022-01-11 15:46:25,235 launch.py:311] Terminating... exit
+INFO 2022-01-11 15:46:25,236 launch_utils.py:319] terminate process group gid:31738
+INFO 2022-01-11 15:46:25,236 launch_utils.py:319] terminate process group gid:31743
+INFO 2022-01-11 15:46:25,236 launch_utils.py:319] terminate process group gid:31748
+INFO 2022-01-11 15:46:25,236 launch_utils.py:319] terminate process group gid:31753
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 308, in launch_collective
+    time.sleep(3)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.7/runpy.py", line 193, in _run_module_as_main
+    "__main__", mod_spec)
+  File "/usr/local/lib/python3.7/runpy.py", line 85, in _run_code
+    exec(code, run_globals)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/launch.py", line 16, in <module>
+    launch.launch()
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 615, in launch
+    launch_collective(args)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 312, in launch_collective
+    terminate_local_procs(procs)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch_utils.py", line 321, in terminate_local_procs
+    time.sleep(1)
+KeyboardInterrupt
+-----------  Configuration Arguments -----------
+backend: auto
+elastic_server: None
+force: False
+gpus: 4,5,6,7
+heter_worker_num: None
+heter_workers: 
+host: None
+http_port: None
+ips: 127.0.0.1
+job_id: None
+log_dir: log
+np: None
+nproc_per_node: None
+run_mode: None
+scale: 0
+server_num: None
+servers: 
+training_script: retrain_admm.py
+training_script_args: [' ']
+worker_num: None
+workers: 
+------------------------------------------------
+launch train in GPU mode!
+launch proc_id:31738 idx:0
+launch proc_id:31743 idx:1
+launch proc_id:31748 idx:2
+launch proc_id:31753 idx:3
+grep: warning: GREP_OPTIONS is deprecated; please use an alias or script
+/usr/local/lib/python3.7/site-packages/setuptools/depends.py:2: DeprecationWarning: the imp module is deprecated in favour of importlib; see the module's documentation for alternative uses
+  import imp
+WARNING 2022-01-18 13:15:49,605 launch.py:416] Not found distinct arguments and compiled with cuda or xpu. Default use collective mode
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.7/runpy.py", line 193, in _run_module_as_main
+    "__main__", mod_spec)
+  File "/usr/local/lib/python3.7/runpy.py", line 85, in _run_code
+    exec(code, run_globals)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/launch.py", line 16, in <module>
+    launch.launch()
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 615, in launch
+    launch_collective(args)
+  File "/usr/local/lib/python3.7/site-packages/paddle/distributed/fleet/launch.py", line 281, in launch_collective
+    gloo_rendezvous_dir = tempfile.mkdtemp()
+  File "/usr/local/lib/python3.7/tempfile.py", line 356, in mkdtemp
+    prefix, suffix, dir, output_type = _sanitize_params(prefix, suffix, dir)
+  File "/usr/local/lib/python3.7/tempfile.py", line 126, in _sanitize_params
+    dir = gettempdir()
+  File "/usr/local/lib/python3.7/tempfile.py", line 294, in gettempdir
+    tempdir = _get_default_tempdir()
+  File "/usr/local/lib/python3.7/tempfile.py", line 206, in _get_default_tempdir
+    fd = _os.open(filename, _bin_openflags, 0o600)
+KeyboardInterrupt
+-----------  Configuration Arguments -----------
+backend: auto
+elastic_server: None
+force: False
+gpus: 0,1,2,3
+heter_worker_num: None
+heter_workers: 
+host: None
+http_port: None
+ips: 127.0.0.1
+job_id: None
+log_dir: log
+np: None
+nproc_per_node: None
+run_mode: None
+scale: 0
+server_num: None
+servers: 
+training_script: retrain_admm.py
+training_script_args: ['--batch_size', '64', '--data', 'imagenet', '--pruning_mode', 'ratio', '--ratio', '0.75', '--lr', '0.01', '--model', 'MobileNet', '--num_epochs', '90', '--pretrained_model', 'admm_models_mbv1', '--step_epochs', '30', '60', '--initial_ratio', '0.15', '--pruning_steps', '100', '--stable_epochs', '0', '--pruning_epochs', '54', '--tunning_epochs', '54', '--last_epoch', '-1', '--pruning_strategy', 'gmp', '--local_sparsity', 'True', '--prune_params_type', 'conv1x1_only', ' ']
+worker_num: None
+workers: 
+------------------------------------------------
+launch train in GPU mode!
