@@ -17,7 +17,8 @@ from .kl import KLObserver
 from .mse import MSEObserver
 from .emd import EMDObserver
 from .avg import AVGObserver
+from .adaround import AdaroundObserver
 
 __all__ = [
-    "HistObserver", "KLObserver", "MSEObserver", "EMDObserver", "AVGObserver"
+    "HistObserver", "KLObserver", "MSEObserver", "EMDObserver", "AVGObserver", "AdaroundObserver"
 ]

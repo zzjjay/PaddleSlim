@@ -59,12 +59,11 @@ class AdaroundObserverLayer(UniformObserver):
         super(AdaroundObserverLayer, self).__init__(quant_bits=quant_bits)
         self._quant_bits = quant_bits
         self.qmin, self.qmax = self.qmin_qmax
-        self._layer = layer
-        self._ptq_observer = ptq_observer
+        self._ptq_observer = ptq_observer._instance(layer)
         self._warmup = warmup
-        self._currnt_iters = 0
+        self._current_iters = 0
         self.alpha = None
-
+        self.alpha_prefix = ("{}.adaround_alpha".format(layer.full_name()))
         # scale_prefix = ("{}.scale".format(layer.full_name()))
         # self._scale_name = unique_name.generate(scale_prefix)
         # scale_attr = paddle.ParamAttr(
@@ -73,10 +72,9 @@ class AdaroundObserverLayer(UniformObserver):
         #     shape=scale.shape, attr=scale_attr, dtype=dtype)
         # self._scale.stop_gradient = True
 
-    def _init_alpha(self):
+    def _init_alpha(self, weight):
         """ Initialize alpha
         """
-        weight = self._layer.weight
         scale = self._ptq_observer.scales()
 
         quantized_weight = np.clip(
@@ -85,24 +83,29 @@ class AdaroundObserverLayer(UniformObserver):
         mantissa = quantized_weight - floor_weight
         init_alpha = -np.log((ZETA - GAMMA) / (mantissa - GAMMA) - 1)
 
-        alpha_prefix = ("{}.adaround".format(self._layer.full_name()))
+        #alpha_prefix = ("{}.adaround".format(weight.name))
+        alpha_prefix = self.alpha_prefix
         self._alpha_name = unique_name.generate(alpha_prefix)
         alpha_attr = paddle.ParamAttr(
             name=self._alpha_name,
             initializer=Assign(value=init_alpha),
             trainable=True)
+        #print(alpha_attr.name) 
         self.alpha = self.create_parameter(
             shape=weight.shape, attr=alpha_attr, dtype=weight.dtype)
+        
 
     def forward(self, weights):
         """ Calculate forward pass.
         """
         self._current_iters += 1
-        if self._current_batch_id <= self._warmup:
-            return self._observer(weights)
+        if self._current_iters < self._warmup:
+            return self._ptq_observer(weights)
 
-        if self.alpha is None:
-            self._init_alpha()
+        if self._current_iters == self._warmup:
+            weights = self._ptq_observer(weights)
+            self._init_alpha(weights)
+            return weights
 
         scale = self._ptq_observer.scales()
         h_v = paddle.clip(
@@ -116,6 +119,10 @@ class AdaroundObserverLayer(UniformObserver):
         clip_weight = paddle.clip(floor_weight + h_v, self.qmin, self.qmax)
         dequant_weight = self._dequant(clip_weight, scale)
         return dequant_weight
+
+    def compute_soft_rounding(self):
+        return paddle.clip(
+            paddle.nn.functional.sigmoid(self.alpha) * (ZETA - GAMMA) + GAMMA, 0, 1)
 
     def cal_thresholds(self):
         """ Compute thresholds for adaround function.
