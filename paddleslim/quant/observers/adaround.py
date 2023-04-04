@@ -11,14 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import time
 import logging
 import numpy as np
+import tqdm
 import paddle
-from paddle.utils import unique_name
-from paddle.nn.initializer import Assign
-from paddle.quantization.factory import ObserverFactory
-from .uniform import UniformObserver
+from paddle.quantization import PTQ
+from paddle.quantization import QuantConfig
+from paddle.quantization.config import DEFAULT_QAT_LAYER_MAPPINGS
+from .adaround_act import AdaroundActObserver
+from .adaround_weight import AdaroundWeightObserver, AdaroundWeightObserverLayer
 from ...common import get_logger
 
 _logger = get_logger(
@@ -30,140 +32,103 @@ GAMMA = -0.1
 ZETA = 1.1
 
 
-class AdaroundObserver(ObserverFactory):
-    r"""
-    It collects maximum absolute values of target tensor.
-    Args:
-        bit_length(int, optional): Number of bits to represent an quantized integer in binary.
-        dtype(str, optional): The data type of input tensor.
-        name (str, optional): This parameter is used by developers to print debugging information. \
-            For details, please refer to :ref:`api_guide_Name`. Default is None.
-    Examples:
-       .. code-block:: python
-            from paddle.quantization import QuantConfig
-            from paddle.quantization.quanters import FakeQuanterWithAbsMaxObserver
-            quanter = FakeQuanterWithAbsMaxObserver(moving_rate=0.99)
-            q_config = QuantConfig(activation=quanter, weight=quanter)
-    """
+class Adaround:
+    def __init__(self,
+                 model,
+                 quant_config,
+                 data_loader,
+                 epochs=10,
+                 batch_nums=10,
+                 lr=0.1):
+        self.origin_model = model
+        self.quant_config = quant_config
+        self._data_loader = data_loader
+        self._batch_nums = batch_nums
+        self._epochs = epochs
+        self._lr = lr
 
-    def __init__(self, ptq_observer, warmup=10, quant_bits=8):
-        super(AdaroundObserver, self).__init__(
-            ptq_observer=ptq_observer, warmup=warmup, quant_bits=quant_bits)
+        self.all_quant_layer_outputs = {}
+        self.all_origin_layer_outputs = {}
 
-    def _get_class(self):
-        return AdaroundObserverLayer
-
-
-class AdaroundObserverLayer(UniformObserver):
-    def __init__(self, layer, ptq_observer, warmup=10, quant_bits=8):
-        super(AdaroundObserverLayer, self).__init__(quant_bits=quant_bits)
-        self._quant_bits = quant_bits
-        self.qmin, self.qmax = self.qmin_qmax
-        self._ptq_observer = ptq_observer._instance(layer)
-        self._warmup = warmup
-        self._current_iters = 0
-        self.alpha = None
-        self.alpha_prefix = ("{}.adaround_alpha".format(layer.full_name()))
-        # scale_prefix = ("{}.scale".format(layer.full_name()))
-        # self._scale_name = unique_name.generate(scale_prefix)
-        # scale_attr = paddle.ParamAttr(
-        #     name=self._scale_name, initializer=Assign(value=scale),trainable=False)
-        # self._scale = self.create_parameter(
-        #     shape=scale.shape, attr=scale_attr, dtype=dtype)
-        # self._scale.stop_gradient = True
-
-    def _init_alpha(self, weight):
-        """ Initialize alpha
+    def init_ptq(self, inplace=False):
+        """ Initialize PTQ.
         """
-        scale = self._ptq_observer.scales()
+        self.ptq = PTQ(self.quant_config)
+        self.quant_model = self.ptq.quantize(self.origin_model, inplace=inplace)
 
-        quantized_weight = np.clip(
-            self._quant(weight.numpy(), scale), self.qmin, self.qmax)
-        floor_weight = np.floor(quantized_weight)
-        mantissa = quantized_weight - floor_weight
-        init_alpha = -np.log((ZETA - GAMMA) / (mantissa - GAMMA) - 1)
+        # apply hook
+        for layer in self.quant_model.sublayers():
+            if isinstance(layer, tuple(DEFAULT_QAT_LAYER_MAPPINGS.items())):
+                layer.register_forward_hook(self._quant_forward_post_hook)
+        for layer in self.origin_model.sublayers():
+            if isinstance(layer, tuple(DEFAULT_QAT_LAYER_MAPPINGS.keys())):
+                layer.register_forward_hook(self._origin_forward_post_hook)
 
-        #alpha_prefix = ("{}.adaround".format(weight.name))
-        alpha_prefix = self.alpha_prefix
-        self._alpha_name = unique_name.generate(alpha_prefix)
-        alpha_attr = paddle.ParamAttr(
-            name=self._alpha_name,
-            initializer=Assign(value=init_alpha),
-            trainable=True)
-        #print(alpha_attr.name) 
-        self.alpha = self.create_parameter(
-            shape=weight.shape, attr=alpha_attr, dtype=weight.dtype)
-        
+    def _quant_forward_post_hook(self, layer, inputs, outputs):
+        weight_name = layer.weight.name.split("_deepcopy")[0]
+        self.all_quant_layer_outputs[weight_name](outputs)
+        return outputs
 
-    def forward(self, weights):
-        """ Calculate forward pass.
-        """
-        self._current_iters += 1
-        if self._current_iters < self._warmup:
-            return self._ptq_observer(weights)
+    def _origin_forward_post_hook(self, layer, inputs, outputs):
+        weight_name = layer.weight.name
+        self.all_origin_layer_outputs[weight_name] = outputs
+        return outputs
 
-        if self._current_iters == self._warmup:
-            weights = self._ptq_observer(weights)
-            self._init_alpha(weights)
-            return weights
+    def run(self):
+        self.model.eval()
+        self.quant_model.eval()
+        with tqdm(
+                total=self._batch_nums,
+                bar_format=
+                'Sampling stage, Run batch:|{bar}| {n_fmt}/{total_fmt}',
+                ncols=80, ) as t:
+            for batch_id, data in enumerate(self._data_loader()):
+                # data (dict)
+                self.quant_model(**data)
+                t.update()
+                if batch_id + 1 == self._batch_nums:
+                    break
 
-        scale = self._ptq_observer.scales()
-        h_v = paddle.clip(
-            paddle.nn.functional.sigmoid(self.alpha) * (ZETA - GAMMA) + GAMMA,
-            0,
-            1, )
+        _logger.info("Begin updating quant model")
+        for layer in self.quant_model.sublayers():
+            if isinstance(layer, AdaroundWeightObserverLayer):
+                weight_name = layer.alpha.split('.adaround_alpha')
+                _logger.info(
+                    f'Current layer: {layer.full_name()}, weight: {weight_name}'
+                )
 
-        quantized_weight = self._quant(weights, scale)
-        floor_weight = (paddle.floor(quantized_weight) -
-                        quantized_weight).detach() + quantized_weight
-        clip_weight = paddle.clip(floor_weight + h_v, self.qmin, self.qmax)
-        dequant_weight = self._dequant(clip_weight, scale)
-        return dequant_weight
+                opt = paddle.optimizer.Adam(
+                    learning_rate=self._lr, parameters=[layer.alpha])
+                for epoch in range(self._epochs):
+                    for batch_id, data in enumerate(self._data_loader()):
+                        # data (dict)
+                        start_time = time.time()
+                        self.origin_model(**data)
+                        self.quant_model(**data)
+                        h_v = layer.compute_soft_rounding()
+                        round_loss = self._round_loss(h_v)
+                        recon_loss = self._recon_loss(weight_name)
+                        total_loss = round_loss + recon_loss
+                        total_loss.backward()
+                        opt.step()
+                        opt.clear_grad()
+                        cur_time = time.time()
 
-    def compute_soft_rounding(self):
-        return paddle.clip(
-            paddle.nn.functional.sigmoid(self.alpha) * (ZETA - GAMMA) + GAMMA, 0, 1)
+                        _logger.info(
+                            "Epoch {:d}, Iter {:d}, lr {}, total_loss {:.5f}, recon_loss {:.5f}, round_loss {:.5f}, time {:.5f}s"
+                            .format(epoch, batch_id, self._lr,
+                                    total_loss.numpy(),
+                                    recon_loss.numpy(),
+                                    round_loss.numpy(),
+                                    cur_time - start_time), )
 
-    def cal_thresholds(self):
-        """ Compute thresholds for adaround function.
-        """
-        self._min, self._max = self._ptq_observer._min, self._ptq_observer._max
-        self._scale, self._zero_point = self.cal_scales_zero_points()
+                        if batch_id + 1 == self._batch_nums:
+                            break
 
-    def _quant(self, x, scale):
-        s = scale / self.qmax
-        quant_x = x / s
-        return quant_x
+    def _round_loss(self, h_v):
+        return paddle.sum(-paddle.pow(paddle.abs(2 * h_v - 1), 3) + 1)
 
-    def _dequant(self, x, scale):
-        s = scale / self.qmax
-        dequant_x = s * x
-        return dequant_x
-
-    def min_value(self) -> float:
-        """ The minimum value of floating-point numbers."""
-        return self._min
-
-    def max_value(self) -> float:
-        """ The maximum value of floating-point numbers."""
-        return self._max
-
-    def bit_length(self):
-        """ Return the bit length of quantized data.
-        """
-        return self._quant_bits
-
-    def quant_axis(self):
-        """ Return quantization axis.
-        """
-        return -1
-
-    def scales(self):
-        """ Return output scales.
-        """
-        return self._ptq_observer.scales()
-
-    def zero_points(self):
-        """ Return output zero points.
-        """
-        return self._zero_point
+    def _recon_loss(self, weight_name):
+        return paddle.nn.functional.mse_loss(
+            self.all_quant_layer_outputs[weight_name],
+            self.all_origin_layer_outputs[weight_name], )

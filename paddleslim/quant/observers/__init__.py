@@ -17,8 +17,10 @@ from .kl import KLObserver
 from .mse import MSEObserver
 from .emd import EMDObserver
 from .avg import AVGObserver
-from .adaround import AdaroundObserver
+from .adaround_weight import AdaroundWeightObserver
+from .adaround_act import AdaroundActObserver
 
 __all__ = [
-    "HistObserver", "KLObserver", "MSEObserver", "EMDObserver", "AVGObserver", "AdaroundObserver"
+    "HistObserver", "KLObserver", "MSEObserver", "EMDObserver", "AVGObserver",
+    "AdaroundWeightObserver", "AdaroundActObserver"
 ]
