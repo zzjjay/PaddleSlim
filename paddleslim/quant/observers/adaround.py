@@ -158,9 +158,9 @@ class Adaround(PTQ):
                     _logger.info(
                         "Epoch {:d}, Iter {:d}, lr {}, total_loss {:.5f}, recon_loss {:.5f}, round_loss {:.5f}, time {:.5f}s"
                         .format(epoch, batch_id, self._lr,
-                                total_loss.numpy(),
-                                recon_loss.numpy(),
-                                round_loss.numpy(), cur_time - start_time), )
+                                total_loss.numpy()[0],
+                                recon_loss.numpy()[0],
+                                round_loss.numpy()[0], cur_time - start_time), )
 
                     if batch_id + 1 == self._batch_nums:
                         break
