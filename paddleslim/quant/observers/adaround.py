@@ -195,7 +195,7 @@ class Adaround(PTQ):
         quant_x = x / s
         return quant_x
 
-    def convert(self, model, inplace=False):
+    def convert(self, model, inplace=True):
         r"""Convert the quantization model to onnx style. And the converted
         model can be saved as inference model by calling paddle.jit.save.
         Args:
