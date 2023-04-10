@@ -66,6 +66,7 @@ class AdaroundActObserverLayer(UniformObserver):
                  batch_nums=10,
                  qdrop=False,
                  drop_prob=0.5):
+        super(AdaroundActObserverLayer, self).__init__()
         self._ptq_observer = ptq_observer._instance(layer)
         self._quant_bits = self._ptq_observer._quant_bits
         self._sign = self._ptq_observer._sign

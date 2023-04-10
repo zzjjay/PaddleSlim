@@ -56,6 +56,7 @@ class AdaroundWeightObserver(ObserverFactory):
 
 class AdaroundWeightObserverLayer(UniformObserver):
     def __init__(self, layer, ptq_observer, batch_nums=10):
+        super(AdaroundWeightObserverLayer, self).__init__()
         self._ptq_observer = ptq_observer._instance(layer)
         self._quant_bits = self._ptq_observer._quant_bits
         self._sign = self._ptq_observer._sign
@@ -73,7 +74,7 @@ class AdaroundWeightObserverLayer(UniformObserver):
         scale = self._ptq_observer.scales()
 
         quantized_weight = np.clip(
-            self._quant(weight.numpy(), scale), self.qmin, self.qmax)
+            self._quant(weight.numpy(), scale), self._qmin, self._qmax)
         floor_weight = np.floor(quantized_weight)
         mantissa = quantized_weight - floor_weight
         init_alpha = -np.log((ZETA - GAMMA) / (mantissa - GAMMA) - 1)
@@ -100,12 +101,13 @@ class AdaroundWeightObserverLayer(UniformObserver):
             return weights
 
         scale = self._ptq_observer.scales()
-        h_v = self.compute_soft_rounding()
+        h_alpha = self.compute_soft_rounding()
 
         quantized_weight = self._quant(weights, scale)
         floor_weight = (paddle.floor(quantized_weight) -
                         quantized_weight).detach() + quantized_weight
-        clip_weight = paddle.clip(floor_weight + h_v, self.qmin, self.qmax)
+        clip_weight = paddle.clip(floor_weight + h_alpha, self._qmin,
+                                  self._qmax)
         dequant_weight = self._dequant(clip_weight, scale)
         return dequant_weight
 
@@ -121,6 +123,7 @@ class AdaroundWeightObserverLayer(UniformObserver):
         self._scale, self._zero_point = self.cal_scales_zero_points()
 
     def _quant(self, x, scale):
+        #TODO: channel-wise quant
         s = scale / self._qmax
         quant_x = x / s
         return quant_x
