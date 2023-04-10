@@ -14,7 +14,7 @@
 import time
 import logging
 import copy
-import tqdm
+from tqdm import tqdm
 import paddle
 from paddle.quantization import PTQ
 from paddle.quantization import QuantConfig
@@ -60,6 +60,7 @@ class Adaround(PTQ):
     def init_ptq(self):
         """ Initialize PTQ.
         """
+        self.origin_model.eval()
         self.quant_model = self.quantize(self.origin_model, inplace=False)
 
         # apply hook
@@ -67,20 +68,22 @@ class Adaround(PTQ):
             for layer in self.quant_model.sublayers():
                 if isinstance(layer,
                               tuple(DEFAULT_QAT_LAYER_MAPPINGS.values())):
-                    layer.register_forward_hook(self._quant_forward_post_hook)
+                    layer.register_forward_post_hook(
+                        self._quant_forward_post_hook)
             for layer in self.origin_model.sublayers():
                 if isinstance(layer, tuple(DEFAULT_QAT_LAYER_MAPPINGS.keys())):
-                    layer.register_forward_hook(self._origin_forward_post_hook)
+                    layer.register_forward_post_hook(
+                        self._origin_forward_post_hook)
 
         elif self._recon_level == 'region-wise':
             for block in self.quant_model.children():
-                block.register_forward_hook(self._quant_forward_post_hook)
+                block.register_forward_post_hook(self._quant_forward_post_hook)
             for block in self.origin_model.children():
-                block.register_forward_hook(self._origin_forward_post_hook)
+                block.register_forward_post_hook(self._origin_forward_post_hook)
 
     def _quant_forward_post_hook(self, layer, inputs, outputs):
-        layer_name = layer.full_name().split("quant_")[0]
-        self.all_quant_layer_outputs[layer_name](outputs)
+        layer_name = layer.full_name().split("quanted_")[-1]
+        self.all_quant_layer_outputs[layer_name] = outputs
         return outputs
 
     def _origin_forward_post_hook(self, layer, inputs, outputs):
@@ -94,8 +97,9 @@ class Adaround(PTQ):
             for layer in self.quant_model.sublayers():
                 if isinstance(layer,
                               tuple(DEFAULT_QAT_LAYER_MAPPINGS.values())):
-                    quant_model_layers[layer.full_name()] = []
-                    quant_model_layers[layer.full_name()].append(layer)
+                    layer_name = layer.full_name().split("quanted_")[-1]
+                    quant_model_layers[layer_name] = []
+                    quant_model_layers[layer_name].append(layer)
 
         elif self._recon_level == 'region-wise':
             for block in self.quant_model.children():
@@ -126,6 +130,9 @@ class Adaround(PTQ):
         _logger.info("Begin updating quant model")
         for name, layers in quant_model_layers.items():
             _logger.info(f'Current layer: {name}')
+            if len(layers) == 0:
+                _logger.info('There is no quantifiable layer, skiping it.')
+                continue
             alphas = [layer.weight_quanter.alpha for layer in layers]
             opt = paddle.optimizer.Adam(
                 learning_rate=self._lr, parameters=alphas)
@@ -158,6 +165,7 @@ class Adaround(PTQ):
                     if batch_id + 1 == self._batch_nums:
                         break
         _logger.info("Update done!")
+        return self.quant_model
 
     def _round_loss(self, h_v):
         return paddle.sum(-paddle.pow(paddle.abs(2 * h_v - 1), 3) + 1)
@@ -167,26 +175,27 @@ class Adaround(PTQ):
             self.all_quant_layer_outputs[name],
             self.all_origin_layer_outputs[name], )
 
-    def _calculate_final_alhpa(self, model):
+    def _calculate_final_alpha(self, model):
         h_alpha_dict = {}
         for layer in model.sublayers():
-            if isinstance(layer, tuple(DEFAULT_QAT_LAYER_MAPPINGS.items())):
+            if isinstance(layer, tuple(DEFAULT_QAT_LAYER_MAPPINGS.values())):
                 h_alpha = layer.weight_quanter.compute_soft_rounding()
                 quant_weight = self._quant(layer.weight,
-                                           layer.weight_quanter.scales())
+                                           layer.weight_quanter.scales(),
+                                           layer.weight_quanter._qmax)
                 adaround_weight = paddle.floor(quant_weight) + h_alpha
                 new_alpha = adaround_weight - paddle.round(
                     quant_weight)  # 0, -1
                 h_alpha_dict[layer.weight.name] = new_alpha
         return h_alpha_dict
 
-    def _quant(self, x, scale):
+    def _quant(self, x, scale, qmax):
         #TODO: channel-wise quant
-        s = scale / self._qmax
+        s = scale / qmax
         quant_x = x / s
         return quant_x
 
-    def convert(self, inplace=False):
+    def convert(self, model, inplace=False):
         r"""Convert the quantization model to onnx style. And the converted
         model can be saved as inference model by calling paddle.jit.save.
         Args:
@@ -195,16 +204,16 @@ class Adaround(PTQ):
 
         Return: The converted model
         """
-        _model = self.quant_model if inplace else copy.deepcopy(
-            self.quant_model)
-        h_alpha_dict = self._calculate_final_alhpa(_model)
+        _model = model if inplace else copy.deepcopy(self.quant_model)
+        h_alpha_dict = self._calculate_final_alpha(_model)
 
         replaced = {}
         for name, child in _model.named_children():
             quant_dequant = None
             if isinstance(child, ConvertibleQuantedLayer):
                 child._convert()
-                child.weight += h_alpha_dict[child.weight.name]
+                adaround_weight = child.weight + h_alpha_dict[child.weight.name]
+                child.weight.set_value(adaround_weight)
             elif isinstance(child, BaseQuanter):
                 quant_dequant = LinearQuanterDequanter.from_quanter(child)
             else:
