@@ -145,7 +145,7 @@ class Adaround(PTQ):
 
                     round_loss = 0.0
                     for layer in layers:
-                        h_alpha = layer.compute_soft_rounding()
+                        h_alpha = layer.weight_quanter.compute_soft_rounding()
                         round_loss += self._round_loss(h_alpha)
                     recon_loss = self._recon_loss(name)
                     total_loss = round_loss + recon_loss
