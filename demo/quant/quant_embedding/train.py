@@ -113,14 +113,20 @@ def convert_python_to_tensor(weight, batch_size, sample_reader):
     return __reader__
 
 
-def train_loop(args, train_program, reader, py_reader, loss, trainer_id, weight,
+def train_loop(args, train_program, dataset, inputs, loss, trainer_id, weight,
                lr):
-
-    py_reader.set_batch_generator(
-        convert_python_to_tensor(weight, args.batch_size, reader.train()))
 
     place = paddle.CPUPlace()
     exe = paddle.static.Executor(place)
+    train_loader = paddle.io.DataLoader(
+        dataset,
+        places=place,
+        feed_list=inputs,
+        return_list=False,
+        use_shared_memory=True,
+        num_workers=args.num_workers)
+    reader = convert_python_to_tensor(weight, args.batch_size, train_loader)
+
     exe.run(paddle.static.default_startup_program())
 
     exec_strategy = paddle.static.ExecutionStrategy()
@@ -137,49 +143,42 @@ def train_loop(args, train_program, reader, py_reader, loss, trainer_id, weight,
         train_program, build_strategy=build_strategy)
 
     for pass_id in range(args.num_passes):
-        py_reader.start()
         time.sleep(10)
         epoch_start = time.time()
-        batch_id = 0
-        start = time.time()
-        try:
-            while True:
+        for data in reader():
+            batch_id = 0
+            start = time.time()
 
-                loss_val = exe.run(program, fetch_list=[loss.name])
-                loss_val = np.mean(loss_val)
+            loss_val = exe.run(program, fetch_list=[loss.name], feed=data)
+            loss_val = np.mean(loss_val)
 
-                if batch_id % args.print_batch == 0:
-                    logger.info(
-                        "TRAIN --> pass: {} batch: {} loss: {} reader queue:{}".
-                        format(pass_id, batch_id,
-                               loss_val.mean(), py_reader.queue.size()))
-                if args.with_speed:
-                    if batch_id % 500 == 0 and batch_id != 0:
-                        elapsed = (time.time() - start)
-                        start = time.time()
-                        samples = 1001 * args.batch_size * int(
-                            os.getenv("CPU_NUM"))
-                        logger.info("Time used: {}, Samples/Sec: {}".format(
-                            elapsed, samples / elapsed))
-                lr.step()
+            if batch_id % args.print_batch == 0:
+                logger.info("TRAIN --> pass: {} batch: {} loss: {}".format(
+                    pass_id, batch_id, loss_val.mean()))
+            if args.with_speed:
+                if batch_id % 500 == 0 and batch_id != 0:
+                    elapsed = (time.time() - start)
+                    start = time.time()
+                    samples = 1001 * args.batch_size * int(os.getenv("CPU_NUM"))
+                    logger.info("Time used: {}, Samples/Sec: {}".format(
+                        elapsed, samples / elapsed))
+            lr.step()
 
-                if batch_id % args.save_step == 0 and batch_id != 0:
-                    model_dir = args.model_output_dir + '/pass-' + str(
-                        pass_id) + ('/batch-' + str(batch_id))
-                    if trainer_id == 0:
-                        paddle.static.save(train_program, model_dir)
-                        print("model saved in %s" % model_dir)
-                batch_id += 1
+            if batch_id % args.save_step == 0 and batch_id != 0:
+                model_dir = args.model_output_dir + '/pass-' + str(pass_id) + (
+                    '/batch-' + str(batch_id))
+                if trainer_id == 0:
+                    paddle.static.save(train_program, model_dir)
+                    print("model saved in %s" % model_dir)
+            batch_id += 1
 
-        except paddle.framework.core.EOFException:
-            py_reader.reset()
-            epoch_end = time.time()
-            logger.info("Epoch: {0}, Train total expend: {1} ".format(
-                pass_id, epoch_end - epoch_start))
-            model_dir = args.model_output_dir + '/pass-' + str(pass_id)
-            if trainer_id == 0:
-                paddle.static.save(train_program, model_dir)
-                print("model saved in %s" % model_dir)
+        epoch_end = time.time()
+        logger.info("Epoch: {0}, Train total expend: {1} ".format(
+            pass_id, epoch_end - epoch_start))
+        model_dir = args.model_output_dir + '/pass-' + str(pass_id)
+        if trainer_id == 0:
+            paddle.static.save(train_program, model_dir)
+            print("model saved in %s" % model_dir)
 
 
 def GetFileList(data_path):
@@ -198,15 +197,15 @@ def train(args):
         os.mkdir(args.model_output_dir)
 
     filelist = GetFileList(args.train_data_dir)
-    word2vec_reader = reader.Word2VecReader(args.dict_path, args.train_data_dir,
-                                            filelist, 0, 1)
+    word2vec_dataset = reader.Word2VecDataset(
+        args.dict_path, args.train_data_dir, filelist, 0, 1)
 
-    logger.info("dict_size: {}".format(word2vec_reader.dict_size))
-    np_power = np.power(np.array(word2vec_reader.id_frequencys), 0.75)
+    logger.info("dict_size: {}".format(word2vec_dataset.dict_size))
+    np_power = np.power(np.array(word2vec_dataset.id_frequencys), 0.75)
     id_frequencys_pow = np_power / np_power.sum()
 
-    loss, py_reader = skip_gram_word2vec(
-        word2vec_reader.dict_size,
+    loss, words = skip_gram_word2vec(
+        word2vec_dataset.dict_size,
         args.embedding_size,
         args.batch_size,
         is_sparse=args.is_sparse,
@@ -222,7 +221,7 @@ def train(args):
     # do local training
     logger.info("run local training")
     main_program = paddle.static.default_main_program()
-    train_loop(args, main_program, word2vec_reader, py_reader, loss, 0,
+    train_loop(args, main_program, word2vec_dataset, words, loss, 0,
                id_frequencys_pow, learning_rate)
 
 

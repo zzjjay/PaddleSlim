@@ -6,6 +6,7 @@ import logging
 import math
 import random
 import io
+from paddle.io import Dataset
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("paddle")
@@ -30,7 +31,7 @@ class NumpyRandomInt(object):
         return result
 
 
-class Word2VecReader(object):
+class Word2VecDataset(Dataset):
     def __init__(self,
                  dict_path,
                  data_path,
@@ -64,8 +65,8 @@ class Word2VecReader(object):
         self.id_frequencys = [
             float(count) / word_all_count for count in self.id_counts_
         ]
-        print("dict_size = " + str(self.dict_size) + " word_all_count = " + str(
-            word_all_count))
+        print("dict_size = " + str(self.dict_size) + " word_all_count = " +
+              str(word_all_count))
 
         self.random_generator = NumpyRandomInt(1, self.window_size_ + 1)
 
@@ -90,8 +91,8 @@ class Word2VecReader(object):
                 with io.open(
                         self.data_path_ + "/" + file, 'r',
                         encoding='utf-8') as f:
-                    logger.info("running data in {}".format(self.data_path_ +
-                                                            "/" + file))
+                    logger.info("running data in {}".format(
+                        self.data_path_ + "/" + file))
                     count = 1
                     for line in f:
                         if self.trainer_id == count % self.trainer_num:
@@ -104,3 +105,9 @@ class Word2VecReader(object):
                         count += 1
 
         return nce_reader
+
+    def __getitem__(self, idx):
+        return next(self.train())
+
+    def __len__(self):
+        return self.dict_size

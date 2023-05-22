@@ -37,9 +37,6 @@ def skip_gram_word2vec(dict_size,
     words.append(true_word)
     words.append(neg_word)
 
-    py_reader = paddle.io.DataLoader.from_generator(
-        capacity=64, feed_list=words, use_double_buffer=True, iterable=False)
-
     words[0] = paddle.reshape(words[0], [-1])
     words[1] = paddle.reshape(words[1], [-1])
     init_width = 0.5 / embedding_size
@@ -105,7 +102,7 @@ def skip_gram_word2vec(dict_size,
     cost = paddle.add(
         paddle.sum(true_xent, axis=1), paddle.sum(neg_xent, axis=1))
     avg_cost = paddle.mean(cost)
-    return avg_cost, py_reader
+    return avg_cost, words
 
 
 def infer_network(vocab_size, emb_size):
