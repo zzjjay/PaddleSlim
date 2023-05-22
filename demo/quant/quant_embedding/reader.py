@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*
 
 import numpy as np
-import preprocess
 import logging
-import math
-import random
 import io
-from paddle.io import Dataset
+from paddle.io import IterableDataset, Sampler
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("paddle")
@@ -31,7 +28,7 @@ class NumpyRandomInt(object):
         return result
 
 
-class Word2VecDataset(Dataset):
+class Word2VecDataset(IterableDataset):
     def __init__(self,
                  dict_path,
                  data_path,
@@ -69,7 +66,6 @@ class Word2VecDataset(Dataset):
               str(word_all_count))
 
         self.random_generator = NumpyRandomInt(1, self.window_size_ + 1)
-        self.train()
 
     def get_context_words(self, words, idx):
         """
@@ -86,9 +82,7 @@ class Word2VecDataset(Dataset):
         targets = words[start_point:idx] + words[idx + 1:end_point + 1]
         return targets
 
-    def train(self):
-        self.words = []
-        self.context_words = []
+    def __iter__(self):
         for file in self.filelist:
             with io.open(
                     self.data_path_ + "/" + file, 'r', encoding='utf-8') as f:
@@ -102,13 +96,35 @@ class Word2VecDataset(Dataset):
                             context_word_ids = self.get_context_words(
                                 word_ids, idx)
                             for context_id in context_word_ids:
-                                self.words.append(target_id)
-                                self.context_words.append(context_id)
-
+                                yield [target_id], [context_id]
                     count += 1
 
-    def __getitem__(self, idx):
-        return [self.words[idx]], [self.context_words[idx]]
 
-    def __len__(self):
-        return self.dict_size
+class MySampler(Sampler):
+    def __init__(self, dataset, batchsize, nce_num, weight):
+        self.dataset = dataset
+        self.batchsize = batchsize
+        self.nce_num = nce_num
+        self.weight = weight
+
+    def __iter__(self):
+        cs = np.array(self.weight).cumsum()
+        result = [[], []]
+        for sample in self.dataset:
+            for i, fea in enumerate(sample):
+                result[i].append(fea)
+            if len(result[0]) == self.batch_size:
+                tensor_result = []
+                for tensor in result:
+                    dat = np.array(tensor, dtype='int64')
+                    if len(dat.shape) > 2:
+                        dat = dat.reshape((dat.shape[0], dat.shape[2]))
+                    elif len(dat.shape) == 1:
+                        dat = dat.reshape((-1, 1))
+                    tensor_result.append(dat)
+                neg_array = cs.searchsorted(np.random.sample(self.nce_num))
+                neg_array = np.tile(neg_array, self.batch_size)
+                tensor_result.append(
+                    neg_array.reshape((self.batch_size, self.nce_num)))
+                yield tensor_result
+                result = [[], []]

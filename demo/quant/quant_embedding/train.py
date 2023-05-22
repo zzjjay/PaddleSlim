@@ -3,11 +3,9 @@ import argparse
 import logging
 import os
 import time
-import math
 import random
 import numpy as np
 import paddle
-import six
 import reader
 from net import skip_gram_word2vec
 import paddle
@@ -87,44 +85,20 @@ def parse_args():
     return parser.parse_args()
 
 
-def convert_python_to_tensor(weight, batch_size, sample_reader):
-    def __reader__():
-        cs = np.array(weight).cumsum()
-        result = [[], []]
-        for sample in sample_reader():
-            for i, fea in enumerate(sample):
-                result[i].append(fea)
-            if len(result[0]) == batch_size:
-                tensor_result = []
-                for tensor in result:
-                    dat = np.array(tensor, dtype='int64')
-                    if len(dat.shape) > 2:
-                        dat = dat.reshape((dat.shape[0], dat.shape[2]))
-                    elif len(dat.shape) == 1:
-                        dat = dat.reshape((-1, 1))
-                    tensor_result.append(dat)
-                neg_array = cs.searchsorted(np.random.sample(args.nce_num))
-                neg_array = np.tile(neg_array, batch_size)
-                tensor_result.append(
-                    neg_array.reshape((batch_size, args.nce_num)))
-                yield tensor_result
-                result = [[], []]
-
-    return __reader__
-
-
 def train_loop(args, train_program, dataset, inputs, loss, trainer_id, weight,
                lr):
 
     place = paddle.CPUPlace()
     exe = paddle.static.Executor(place)
+    batch_sampler = reader.MySampler(dataset, args.batch_size, args.nce_num,
+                                     weight)
     train_loader = paddle.io.DataLoader(
         dataset,
+        batch_sampler=batch_sampler,
         places=place,
         feed_list=inputs,
         return_list=False,
         use_shared_memory=True, )
-    reader = convert_python_to_tensor(weight, args.batch_size, train_loader)
 
     exe.run(paddle.static.default_startup_program())
 
@@ -144,7 +118,7 @@ def train_loop(args, train_program, dataset, inputs, loss, trainer_id, weight,
     for pass_id in range(args.num_passes):
         time.sleep(10)
         epoch_start = time.time()
-        for data in reader():
+        for data in train_loader():
             batch_id = 0
             start = time.time()
 
