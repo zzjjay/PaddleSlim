@@ -69,6 +69,7 @@ class Word2VecDataset(Dataset):
               str(word_all_count))
 
         self.random_generator = NumpyRandomInt(1, self.window_size_ + 1)
+        self.train()
 
     def get_context_words(self, words, idx):
         """
@@ -86,28 +87,28 @@ class Word2VecDataset(Dataset):
         return targets
 
     def train(self):
-        def nce_reader():
-            for file in self.filelist:
-                with io.open(
-                        self.data_path_ + "/" + file, 'r',
-                        encoding='utf-8') as f:
-                    logger.info("running data in {}".format(
-                        self.data_path_ + "/" + file))
-                    count = 1
-                    for line in f:
-                        if self.trainer_id == count % self.trainer_num:
-                            word_ids = [int(w) for w in line.split()]
-                            for idx, target_id in enumerate(word_ids):
-                                context_word_ids = self.get_context_words(
-                                    word_ids, idx)
-                                for context_id in context_word_ids:
-                                    yield [target_id], [context_id]
-                        count += 1
+        self.words = []
+        self.context_words = []
+        for file in self.filelist:
+            with io.open(
+                    self.data_path_ + "/" + file, 'r', encoding='utf-8') as f:
+                # logger.info("running data in {}".format(
+                # self.data_path_ + "/" + file))
+                count = 1
+                for line in f:
+                    if self.trainer_id == count % self.trainer_num:
+                        word_ids = [int(w) for w in line.split()]
+                        for idx, target_id in enumerate(word_ids):
+                            context_word_ids = self.get_context_words(
+                                word_ids, idx)
+                            for context_id in context_word_ids:
+                                self.words.append(target_id)
+                                self.context_words.append(context_id)
 
-        return nce_reader
+                    count += 1
 
     def __getitem__(self, idx):
-        return next(self.train())
+        return [self.words[idx]], [self.context_words[idx]]
 
     def __len__(self):
         return self.dict_size

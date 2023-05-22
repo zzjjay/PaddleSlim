@@ -123,8 +123,7 @@ def train_loop(args, train_program, dataset, inputs, loss, trainer_id, weight,
         places=place,
         feed_list=inputs,
         return_list=False,
-        use_shared_memory=True,
-        num_workers=args.num_workers)
+        use_shared_memory=True, )
     reader = convert_python_to_tensor(weight, args.batch_size, train_loader)
 
     exe.run(paddle.static.default_startup_program())
