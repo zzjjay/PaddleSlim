@@ -85,16 +85,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def train_loop(args, train_program, dataset, inputs, loss, trainer_id, weight,
-               lr):
+def train_loop(args, train_program, dataset, inputs, loss, trainer_id, lr):
 
     place = paddle.CPUPlace()
     exe = paddle.static.Executor(place)
-    batch_sampler = reader.MySampler(dataset, args.batch_size, args.nce_num,
-                                     weight)
+
     train_loader = paddle.io.DataLoader(
         dataset,
-        batch_sampler=batch_sampler,
         places=place,
         feed_list=inputs,
         return_list=False,
@@ -195,7 +192,7 @@ def train(args):
     logger.info("run local training")
     main_program = paddle.static.default_main_program()
     train_loop(args, main_program, word2vec_dataset, words, loss, 0,
-               id_frequencys_pow, learning_rate)
+               learning_rate)
 
 
 if __name__ == '__main__':

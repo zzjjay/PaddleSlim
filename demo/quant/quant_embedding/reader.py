@@ -35,12 +35,14 @@ class Word2VecDataset(IterableDataset):
                  filelist,
                  trainer_id,
                  trainer_num,
+                 batch_size,
                  window_size=5):
         self.window_size_ = window_size
         self.data_path_ = data_path
         self.filelist = filelist
         self.trainer_id = trainer_id
         self.trainer_num = trainer_num
+        self.batch_size = batch_size
 
         word_all_count = 0
         id_counts = []
@@ -64,6 +66,9 @@ class Word2VecDataset(IterableDataset):
         ]
         print("dict_size = " + str(self.dict_size) + " word_all_count = " +
               str(word_all_count))
+        np_power = np.power(np.array(self.id_frequencys), 0.75)
+        self.id_frequencys_pow = np_power / np_power.sum()
+        print("id_frequencys_pow: " + str(self.id_frequencys_pow))
 
         self.random_generator = NumpyRandomInt(1, self.window_size_ + 1)
 
@@ -82,12 +87,10 @@ class Word2VecDataset(IterableDataset):
         targets = words[start_point:idx] + words[idx + 1:end_point + 1]
         return targets
 
-    def __iter__(self):
+    def train(self):
         for file in self.filelist:
             with io.open(
                     self.data_path_ + "/" + file, 'r', encoding='utf-8') as f:
-                # logger.info("running data in {}".format(
-                # self.data_path_ + "/" + file))
                 count = 1
                 for line in f:
                     if self.trainer_id == count % self.trainer_num:
@@ -98,6 +101,28 @@ class Word2VecDataset(IterableDataset):
                             for context_id in context_word_ids:
                                 yield [target_id], [context_id]
                     count += 1
+
+    def __iter__(self):
+        cs = np.array(self.id_frequencys_pow).cumsum()
+        result = [[], []]
+        for sample in self.train():
+            for i, fea in enumerate(sample):
+                result[i].append(fea)
+            if len(result[0]) == self.batch_size:
+                tensor_result = []
+                for tensor in result:
+                    dat = np.array(tensor, dtype='int64')
+                    if len(dat.shape) > 2:
+                        dat = dat.reshape((dat.shape[0], dat.shape[2]))
+                    elif len(dat.shape) == 1:
+                        dat = dat.reshape((-1, 1))
+                    tensor_result.append(dat)
+                neg_array = cs.searchsorted(np.random.sample(self.nce_num))
+                neg_array = np.tile(neg_array, self.batch_size)
+                tensor_result.append(
+                    neg_array.reshape((self.batch_size, self.nce_num)))
+                yield tensor_result
+                result = [[], []]
 
 
 class MySampler(Sampler):
