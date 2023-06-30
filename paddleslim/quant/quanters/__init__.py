@@ -15,5 +15,10 @@
 from .lsq_act import ActLSQplusQuanter
 from .lsq_weight import WeightLSQplusQuanter
 from .pact import PACTQuanter
+from .channel_wise_abs_max import FakeQuanterChannelWiseAbsMaxObserver
+from .freeze import FreezeQuanter
 
-__all__ = ["ActLSQplusQuanter", "WeightLSQplusQuanter", "PACTQuanter"]
+__all__ = [
+    "ActLSQplusQuanter", "WeightLSQplusQuanter", "PACTQuanter",
+    "FakeQuanterChannelWiseAbsMaxObserver", "FreezeQuanter"
+]

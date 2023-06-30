@@ -21,6 +21,8 @@ import tempfile
 from paddle.vision.models import resnet18
 from paddleslim.quant import SlimQuantConfig as QuantConfig
 from paddleslim.quant import SlimQAT
+from paddleslim.quant.quanters import FakeQuanterChannelWiseAbsMaxObserver
+from paddleslim.quant.quanters.channel_wise_abs_max import FakeQuanterChannelWiseAbsMaxObserverLayer
 from paddle.quantization.quanters import FakeQuanterWithAbsMaxObserver
 from paddle.quantization.quanters.abs_max import FakeQuanterWithAbsMaxObserverLayer
 from paddle.nn.quant.format import LinearDequanter, LinearQuanter
@@ -61,12 +63,15 @@ class TestQuantAwareTraining(unittest.TestCase):
         pass
 
     def init_case(self):
-        quanter = FakeQuanterWithAbsMaxObserver(moving_rate=0.9)
-        self.quantizer_type = FakeQuanterWithAbsMaxObserverLayer
-        self.quantizer_type_in_static = "fake_quantize_dequantize_moving_average_abs_max"
+        act_quanter = FakeQuanterWithAbsMaxObserver(moving_rate=0.9)
+        weight_quanter = FakeQuanterChannelWiseAbsMaxObserver()
+        self.act_quantizer_type = FakeQuanterWithAbsMaxObserverLayer
+        self.act_quantizer_type_in_static = "fake_quantize_dequantize_moving_average_abs_max"
+        self.weight_quantizer_type = FakeQuanterWithAbsMaxObserverLayer
+        self.weight_quantizer_type_in_static = "fake_quantize_dequantize_moving_average_abs_max"
         self.q_config = QuantConfig(activation=None, weight=None)
         self.q_config.add_type_config(
-            paddle.nn.Conv2D, activation=quanter, weight=quanter)
+            paddle.nn.Conv2D, activation=act_quanter, weight=weight_quanter)
         self.extra_qconfig(self.q_config)
 
     def _count_layers(self, model, layer_type):
@@ -121,18 +126,26 @@ class TestQuantAwareTraining(unittest.TestCase):
         model = resnet18()
         qat = SlimQAT(self.q_config)
         quant_model = qat.quantize(model, inplace=True, inputs=self.dummy_input)
-        quantizer_count_indygraph = self._count_layers(quant_model,
-                                                       self.quantizer_type)
+        act_quantizer_count_indygraph = self._count_layers(
+            quant_model, self.act_quantizer_type)
+        weight_quantizer_count_indygraph = self._count_layers(
+            quant_model, self.weight_quantizer_type)
         save_path = os.path.join(self.path, 'qat_model')
         quant_model.eval()
         paddle.jit.save(quant_model, save_path, input_spec=[self.dummy_input])
 
-        layer2count = load_model_and_count_layer(
-            save_path, [self.quantizer_type_in_static])
-        quantizer_count_in_static_model = layer2count[
-            self.quantizer_type_in_static]
-        self.assertEqual(quantizer_count_indygraph,
-                         quantizer_count_in_static_model)
+        layer2count = load_model_and_count_layer(save_path, [
+            self.act_quantizer_type_in_static,
+            self.weight_quantizer_type_in_static
+        ])
+        act_quantizer_count_in_static_model = layer2count[
+            self.act_quantizer_type_in_static]
+        self.assertEqual(act_quantizer_count_indygraph,
+                         act_quantizer_count_in_static_model)
+        weight_quantizer_count_in_static_model = layer2count[
+            self.weight_quantizer_type_in_static]
+        self.assertEqual(weight_quantizer_count_indygraph,
+                         weight_quantizer_count_in_static_model)
 
 
 if __name__ == '__main__':
