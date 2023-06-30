@@ -17,7 +17,7 @@ from typing import Dict
 import paddle
 from paddle.nn.initializer import Constant
 from paddle.utils import unique_name
-
+from paddle.framework import ParamAttr
 from paddle.quantization.base_quanter import QuanterFactory
 from .base_fake_quanter import BaseFakeQuanterLayer
 
@@ -95,6 +95,7 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
         if self._quanter is None:
             return self._quant_dequant(inputs)
         else:
+            self._quanter.eval()
             return self._quanter(inputs)
 
     def _quant_dequant(self, x, weight_shape):
