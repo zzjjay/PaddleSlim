@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from typing import Dict
-
+import numpy as np
 import paddle
 from paddle.nn.initializer import Constant
+import paddle.nn.functional as F
 from paddle.utils import unique_name
 from paddle.framework import ParamAttr
 from paddle.quantization.factory import QuanterFactory
@@ -29,7 +30,7 @@ CHANNEL_AXIS: Dict[type, int] = {
 }
 
 
-class FreezeQuanter(QuanterFactory):
+class QILQuanter(QuanterFactory):
     def __init__(self,
                  bit_length=8,
                  channel_wise=False,
@@ -46,10 +47,10 @@ class FreezeQuanter(QuanterFactory):
             quanter=quanter)
 
     def _get_class(self):
-        return FreezeQuanterLayer
+        return QILQuanterLayer
 
 
-class FreezeQuanterLayer(BaseFakeQuanterLayer):
+class QILQuanterLayer(BaseFakeQuanterLayer):
     def __init__(self,
                  layer,
                  bit_length=8,
@@ -62,7 +63,7 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
         self._bit_length = bit_length
         self._sign = sign
         if quanter is None:
-            self._init_scale(layer, channel_wise, name, dtype)
+            self._init_value(layer, channel_wise, name, dtype)
             self._quanter = None
             self._qmin, self._qmax = self.qmin_qmax
         else:
@@ -71,7 +72,7 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
             self._quant_axis = self._quanter.quant_axis()
             self.bit_length = self._quanter.bit_length()
 
-    def _init_scale(self, layer, channel_wise, name, dtype):
+    def _init_value(self, layer, channel_wise, name, dtype):
         if channel_wise:
             for key in CHANNEL_AXIS.keys():
                 if issubclass(type(layer), key):
@@ -82,29 +83,65 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
             self._quant_axis = -1
             self._channel_num = 1
 
-        scale_prefix = f"{name}.scale" if name else 'quant_dequant.scale'
-        self._scale_name = unique_name.generate(scale_prefix)
-        scale_attr = ParamAttr(
-            name=self._scale_name,
-            initializer=Constant(0.001),
-            trainable=False, )
-        self._scale = self.create_parameter(
-            shape=[self._channel_num], attr=scale_attr, dtype=dtype)
-        self._scale.stop_gradient = True
+        c_prefix = f"{name}.c_delta" if name else 'quant_dequant.c_delta'
+        c_attr = ParamAttr(
+            name=unique_name.generate(c_prefix),
+            initializer=Constant(0.1),
+            trainable=True, )
+        self._c_delta = self.create_parameter(
+            shape=[self._channel_num], attr=c_attr, dtype=dtype)
+
+        d_prefix = f"{name}.d_delta" if name else 'quant_dequant.d_delta'
+        d_attr = ParamAttr(
+            name=unique_name.generate(d_prefix),
+            initializer=Constant(0.05),
+            trainable=True, )
+        self._d_delta = self.create_parameter(
+            shape=[self._channel_num], attr=d_attr, dtype=dtype)
 
     def forward(self, inputs):
         if self._quanter is None:
-            return self._quant_dequant(inputs)
+            if self.training:
+                self._c_delta.set_value(np.abs(self._c_delta.numpy()))
+                self._d_delta.set_value(np.abs(self._d_delta.numpy()))
+
+                if self._d_delta > self._c_delta:
+                    self._d_delta = self._c_delta
+
+                prune_point = self._c_delta - self._d_delta
+                clip_point = self._c_delta + self._d_delta
+
+                alpha = 0.5 / self._d_delta
+                beta = ((-0.5 * self._c_delta) / self._d_delta) + 0.5
+
+                # clip
+                # tmp_inputs = paddle.where(tmp_inputs>1, paddle.ones_like(tmp_inputs), tmp_inputs)
+                # # prune
+                # tmp_inputs = paddle.where(tmp_inputs<0, paddle.zeros_like(tmp_inputs), tmp_inputs)
+                # Transformer
+                trans_inputs = alpha * paddle.abs(inputs) + beta
+                trans_inputs = paddle.clip(trans_inputs, min=0.0, max=1.0)
+                trans_inputs = trans_inputs * paddle.sign(inputs)
+
+                quantized_inputs = paddle.round(
+                    trans_inputs * self._qmax) / self._qmax
+                trans_inputs = trans_inputs + (
+                    quantized_inputs - trans_inputs).detach()
+                self._scale = clip_point
+                return trans_inputs * self._scale
+            else:
+                return self._quant_dequant(inputs, self._scale)
+
         else:
             self._quanter.eval()
             return self._quanter(inputs)
 
-    def _quant_dequant(self, x):
-        if self._scale.shape[0] == 1:
-            s = self._scale / self._qmax
+    def _quant_dequant(self, x, scale):
+        if scale.shape[0] == 1:
+            s = scale / self._qmax
         else:
             weight_shape = x.shape
-            scale = self._scale.reshape([self._scale.shape[0], 1])
+            scale = scale.reshape([scale.shape[0], 1])
             if len(weight_shape) == 2:
                 scale = scale.repeat_interleave(weight_shape[0], axis=1).t()
             else:
