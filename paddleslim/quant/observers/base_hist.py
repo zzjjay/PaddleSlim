@@ -49,8 +49,7 @@ class BaseHistObserver(UniformObserver):
     def _min_max(self, tensor):
         """" Get the min and max value of a tensor.
         """
-        return float(paddle.min(tensor).numpy()), float(
-            paddle.max(tensor).numpy())
+        return float(paddle.min(tensor)), float(paddle.max(tensor))
 
     def _init_hists(self, inputs):
         """" Initialize the histogram instance based on a tensor.

@@ -18,7 +18,7 @@ import paddle
 from paddle.nn.initializer import Constant
 from paddle.utils import unique_name
 from paddle.framework import ParamAttr
-from paddle.quantization.base_quanter import QuanterFactory
+from paddle.quantization.factory import QuanterFactory
 from .base_fake_quanter import BaseFakeQuanterLayer
 
 CHANNEL_AXIS: Dict[type, int] = {
@@ -60,6 +60,7 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
                  quanter=None):
         super().__init__()
         self._bit_length = bit_length
+        self._sign = sign
         if quanter is None:
             self._init_scale(layer, channel_wise, name, dtype)
             self._quanter = None

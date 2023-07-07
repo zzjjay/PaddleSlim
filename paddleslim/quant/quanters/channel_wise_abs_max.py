@@ -23,7 +23,7 @@ from paddle.nn.initializer import Constant
 from paddle.utils import unique_name
 
 from paddle.quantization.base_quanter import BaseQuanter
-from paddle.quantization.base_quanter import QuanterFactory
+from paddle.quantization.factory import QuanterFactory
 
 CHANNEL_AXIS: Dict[type, int] = {
     paddle.nn.Conv2D: 0,
