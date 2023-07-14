@@ -87,6 +87,7 @@ class TQTQuanterLayer(BaseFakeQuanterLayer):
             if self._init_state == 0:
                 with paddle.no_grad():
                     self._init_params(inputs)
+            inputs.stop_gradient = False
             outputs = TQTFunc.apply(inputs, self._log2_t, self._qmin,
                                     self._qmax)
             return outputs

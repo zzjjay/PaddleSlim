@@ -39,4 +39,4 @@ class TQTFunc(PyLayer):
         grad_s = (rounded - x_div_s) * middle + qmin * lower + qmax * upper
         grad_log_2_t = math.log(2) * s * grad_s
         grad_x = middle
-        return grad_output * grad_x, grad_output * grad_log_2_t, None, None
+        return grad_output * grad_x, grad_output * grad_log_2_t
