@@ -119,9 +119,15 @@ class QILQuanterLayer(BaseFakeQuanterLayer):
                 # # prune
                 # tmp_inputs = paddle.where(tmp_inputs<0, paddle.zeros_like(tmp_inputs), tmp_inputs)
                 # Transformer
-                trans_inputs = alpha * paddle.abs(inputs) + beta
-                trans_inputs = paddle.clip(trans_inputs, min=0.0, max=1.0)
-                trans_inputs = trans_inputs * paddle.sign(inputs)
+                trans_inputs = paddle.where(
+                    paddle.abs(inputs) < prune_point,
+                    paddle.zeros_like(inputs),
+                    paddle.where(
+                        paddle.abs(inputs) > clip_point,
+                        paddle.sign(inputs), (alpha * paddle.abs(inputs) + beta)
+                        * paddle.sign(inputs)))
+
+                # new
 
                 quantized_inputs = paddle.round(
                     trans_inputs * self._qmax) / self._qmax
