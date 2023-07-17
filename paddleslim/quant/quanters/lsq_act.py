@@ -121,7 +121,8 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
             1.0 / math.sqrt(activation.numel() * self.qmax))
         min_a = paddle.min(activation.detach())
         max_a = paddle.max(activation.detach())
-        self._scale.set_value((max_a - min_a) / (self.qmax - self.qmin))
+        scale = (max_a - min_a) / (self.qmax - self.qmin)
+        self._scale.set_value(scale.unsqueeze(0))
         if not self._symmetric:
             self._beta.set_value(min_a - self._scale * self.qmin)
         self._init_state += 1

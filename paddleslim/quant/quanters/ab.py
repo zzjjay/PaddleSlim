@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import paddle
 from paddle.nn.initializer import Constant
 from paddle.utils import unique_name
@@ -19,42 +20,51 @@ from paddle.framework import ParamAttr
 from paddle.quantization.factory import QuanterFactory
 from .base_fake_quanter import BaseFakeQuanterLayer
 from .utils import *
-from .tqt_func import TQTFunc
 
 
-class TQTQuanter(QuanterFactory):
+class ABQuanter(QuanterFactory):
     def __init__(self,
                  bit_length=8,
                  channel_wise=False,
                  sign=True,
                  dtype='float32',
-                 name=None):
+                 name=None,
+                 windows=[0, 0],
+                 quanter=None):
         super().__init__(
             bit_length=bit_length,
             channel_wise=channel_wise,
             sign=sign,
             dtype=dtype,
-            name=name)
+            name=name,
+            windows=windows,
+            quanter=quanter)
 
     def _get_class(self):
-        return TQTQuanterLayer
+        return ABQuanterLayer
 
 
-class TQTQuanterLayer(BaseFakeQuanterLayer):
+class ABQuanterLayer(BaseFakeQuanterLayer):
     def __init__(self,
                  layer,
                  bit_length=8,
                  channel_wise=False,
                  sign=True,
                  dtype='float32',
-                 name=None):
+                 name=None,
+                 windows=[0, 0],
+                 quanter=None):
         super().__init__()
         self._bit_length = bit_length
         self._sign = sign
+        self._init_scale(layer, channel_wise, name, dtype)
+        self._quanter = None
         self._qmin, self._qmax = self.qmin_qmax
-        self._channel_wise = channel_wise
+        self._current_iters = -1
+        self._windows = windows
 
-        if self._channel_wise:
+    def _init_scale(self, layer, channel_wise, name, dtype):
+        if channel_wise:
             for key in CHANNEL_AXIS.keys():
                 if issubclass(type(layer), key):
                     self._quant_axis = CHANNEL_AXIS[key]
@@ -64,49 +74,60 @@ class TQTQuanterLayer(BaseFakeQuanterLayer):
             self._quant_axis = -1
             self._channel_num = 1
 
-        log2_t_prefix = f"{name}.log2_t" if name else 'quant_dequant.log2_t'
-        log2_t_attr = ParamAttr(
-            name=unique_name.generate(log2_t_prefix),
-            initializer=Constant(1.),
-            trainable=True, )
-        self._log2_t = self.create_parameter(
-            shape=[self._channel_num], attr=log2_t_attr, dtype=dtype)
-
-        # scale = 2 ** log2_t
         scale_prefix = f"{name}.scale" if name else 'quant_dequant.scale'
+        self._scale_name = unique_name.generate(scale_prefix)
         scale_attr = ParamAttr(
-            name=unique_name.generate(scale_prefix),
-            initializer=Constant(1.),
+            name=self._scale_name,
+            initializer=Constant(0.001),
             trainable=False, )
         self._scale = self.create_parameter(
             shape=[self._channel_num], attr=scale_attr, dtype=dtype)
-        self._init_state = 0
+        self._scale.stop_gradient = True
 
     def forward(self, inputs):
         if self.training:
-            if self._init_state == 0:
-                with paddle.no_grad():
-                    self._init_params(inputs)
-            inputs.stop_gradient = False
-            outputs = TQTFunc.apply(inputs, self._log2_t, self._qmin,
-                                    self._qmax)
-            return outputs
+            alpha = self._update_params(inputs.detach())
+            return inputs * (1 - alpha) + alpha * self._quant_dequant(
+                inputs, self._current_iters > self._windows[1])
         else:
             return self._quant_dequant(inputs)
 
-    def _init_params(self, inputs):
-        _, thershold = percent(inputs)
-        log2_t = paddle.log2(thershold)
-        if len(log2_t.shape) == 0:
-            log2_t = log2_t.unsqueeze(0)
-        self._log2_t.set_value(log2_t)
-        self._init_state += 1
+    def _update_params(self, inputs):
+        min_value, max_value = avg_min_max(inputs)
+        cur_scale = (max_value - min_value) / (
+            self._qmax - self._qmin) * self._qmax
+        if self._current_iters < 0:
+            self._scale.set_value(cur_scale.unsqueeze(0))
+        else:
+            self._scale.set_value(
+                cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
 
-    def _quant_dequant(self, x):
-        scale = 2.**paddle.ceil(self._log2_t)
-        s = scale / self._qmax
+        t0, t1 = self._windows
+        self._current_iters += 1
+        if t0 == t1 or self._current_iters > t1:
+            return 1.
+        if self._current_iters <= t0:
+            return 0.
+        if self._current_iters <= t1:
+            return 1 - math.pow((t1 - self._current_iters) / (t1 - t0), 3)
+
+    def _quant_dequant(self, x, update=False):
+        if self._scale.shape[0] == 1:
+            s = self._scale / self._qmax
+        else:
+            weight_shape = x.shape
+            scale = self._scale.reshape([self._scale.shape[0], 1])
+            if len(weight_shape) == 2:
+                scale = scale.repeat_interleave(weight_shape[0], axis=1).t()
+            else:
+                scale = scale.repeat_interleave(
+                    weight_shape[1] * weight_shape[2] * weight_shape[3], axis=1)
+                scale = scale.reshape(weight_shape)
+            s = scale / self._qmax
         quant_x = paddle.clip(paddle.round(x / s), self._qmin, self._qmax)
-        dequant_x = quant_x * s
+        dequant_x = s * quant_x
+        if update:
+            return x + (dequant_x - x).detach()
         return dequant_x
 
     def bit_length(self):
@@ -116,8 +137,6 @@ class TQTQuanterLayer(BaseFakeQuanterLayer):
         return self._quant_axis
 
     def scales(self):
-        scale = 2.**paddle.ceil(self._log2_t)
-        self._scale.set_value(scale)
         return self._scale
 
     def zero_points(self):

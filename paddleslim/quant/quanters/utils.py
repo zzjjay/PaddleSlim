@@ -18,7 +18,13 @@ import numpy as np
 from typing import Dict
 
 __all__ = [
-    "sigma", "min_max", "histogram", "CHANNEL_AXIS", "init_lsq", "percent"
+    "sigma",
+    "min_max",
+    "histogram",
+    "CHANNEL_AXIS",
+    "init_lsq",
+    "percent",
+    "avg_min_max",
 ]
 
 CHANNEL_AXIS: Dict[type, int] = {
@@ -42,6 +48,15 @@ def min_max(src, axis=None):
     # src: Paddle.Tensor
     min_value = src.min(axis=axis)
     max_value = src.max(axis=axis)
+    return min_value, max_value
+
+
+def avg_min_max(src):
+    # src: B, N, H, W
+    B, N, H, W = src.shape
+    new_src = src.transpose([1, 0, 2, 3]).reshape([N, -1])
+    min_value = new_src.min(axis=1).mean()
+    max_value = new_src.max(axis=1).mean()
     return min_value, max_value
 
 
