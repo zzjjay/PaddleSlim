@@ -109,14 +109,15 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
                 return self._quanter(inputs)
 
     def _update_params(self, inputs):
-        min_value, max_value = avg_min_max(inputs)
-        cur_scale = (max_value - min_value) / (
-            self._qmax - self._qmin) * self._qmax
-        if self._current_iters < 0:
-            self._scale.set_value(cur_scale.unsqueeze(0))
-        else:
-            self._scale.set_value(
-                cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
+        if self._quanter is None:
+            min_value, max_value = avg_min_max(inputs)
+            cur_scale = (max_value - min_value) / (
+                self._qmax - self._qmin) * self._qmax
+            if self._current_iters < 0:
+                self._scale.set_value(cur_scale.unsqueeze(0))
+            else:
+                self._scale.set_value(
+                    cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
 
         t0, t1 = self._windows
         self._current_iters += 1
