@@ -57,11 +57,16 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
         super().__init__()
         self._bit_length = bit_length
         self._sign = sign
-        self._init_scale(layer, channel_wise, name, dtype)
-        self._quanter = None
         self._qmin, self._qmax = self.qmin_qmax
         self._current_iters = -1
         self._windows = windows
+        if quanter:
+            self._quanter = quanter._instance(layer)
+            self._scale = self._quanter.scales()
+            self._quant_axis = self._quanter.quant_axis()
+        else:
+            self._init_scale(layer, channel_wise, name, dtype)
+            self._quanter = None
 
     def _init_scale(self, layer, channel_wise, name, dtype):
         if channel_wise:
@@ -87,10 +92,21 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
     def forward(self, inputs):
         if self.training:
             alpha = self._update_params(inputs.detach())
-            return inputs * (1 - alpha) + alpha * self._quant_dequant(
-                inputs, self._current_iters > self._windows[1])
+            if self._quanter is None:
+                return inputs * (1 - alpha) + alpha * self._quant_dequant(
+                    inputs, self._current_iters > self._windows[1])
+            else:
+                if self._current_iters <= self._windows[1]:
+                    with paddle.no_grad():
+                        qdq_inputs = self._quanter(inputs)
+                else:
+                    qdq_inputs = self._quanter(inputs)
+                return inputs * (1 - alpha) + alpha * qdq_inputs
         else:
-            return self._quant_dequant(inputs)
+            if self._quanter is None:
+                return self._quant_dequant(inputs)
+            else:
+                return self._quanter(inputs)
 
     def _update_params(self, inputs):
         min_value, max_value = avg_min_max(inputs)

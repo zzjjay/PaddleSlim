@@ -69,7 +69,7 @@ class FreezeQuanterLayer(BaseFakeQuanterLayer):
             self._quanter = quanter._instance(layer)
             self._scale = self._quanter.scales()
             self._quant_axis = self._quanter.quant_axis()
-            self.bit_length = self._quanter.bit_length()
+            self._bit_length = self._quanter.bit_length()
 
     def _init_scale(self, layer, channel_wise, name, dtype):
         if channel_wise:
