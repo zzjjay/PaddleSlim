@@ -56,8 +56,8 @@ class LsqFunc(PyLayer):
             q_w = q_w.reshape(sizes)
         else:
             q_w = paddle.divide(weight, alpha)
-        lower_flag = paddle.cast((q_w < Qn), 'float32')
-        upper_flag = paddle.cast((q_w > Qp), 'float32')
+        lower_flag = paddle.cast((q_w < Qn), q_w.dtype)
+        upper_flag = paddle.cast((q_w > Qp), q_w.dtype)
         middle_flag = 1.0 - lower_flag - upper_flag
         if per_channel:
             grad_alpha = (

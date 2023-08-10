@@ -93,8 +93,12 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
         if self.training:
             alpha = self._update_params(inputs.detach())
             if self._quanter is None:
-                return inputs * (1 - alpha) + alpha * self._quant_dequant(
-                    inputs, self._current_iters > self._windows[1])
+                if self._current_iters <= self._windows[1]:
+                    with paddle.no_grad():
+                        qdq_inputs = self._quant_dequant(inputs)
+                else:
+                    qdq_inputs = self._quant_dequant(inputs, update=True)
+                return inputs * (1 - alpha) + alpha * qdq_inputs
             else:
                 if self._current_iters <= self._windows[1]:
                     with paddle.no_grad():
@@ -110,14 +114,22 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
 
     def _update_params(self, inputs):
         if self._quanter is None:
-            min_value, max_value = avg_min_max(inputs)
-            cur_scale = (max_value - min_value) / (
-                self._qmax - self._qmin) * self._qmax
-            if self._current_iters < 0:
-                self._scale.set_value(cur_scale.unsqueeze(0))
+            if self._channel_num > 1:
+                reduce_axis = tuple([
+                    i for i in range(len(inputs.shape)) if i != self._quant_axis
+                ])
+                abs_max_values = paddle.max(
+                    paddle.abs(inputs), axis=reduce_axis)
+                self._scale.set_value(abs_max_values)
             else:
-                self._scale.set_value(
-                    cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
+                min_value, max_value = avg_min_max(inputs)
+                cur_scale = (max_value - min_value) / (
+                    self._qmax - self._qmin) * self._qmax
+                if self._current_iters < 0:
+                    self._scale.set_value(cur_scale.unsqueeze(0))
+                else:
+                    self._scale.set_value(
+                        cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
 
         t0, t1 = self._windows
         self._current_iters += 1
