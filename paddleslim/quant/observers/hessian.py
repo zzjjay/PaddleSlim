@@ -38,8 +38,13 @@ class HessianObserver(ObserverFactory):
             q_config = QuantConfig(activation=quanter, weight=quanter)
     """
 
-    def __init__(self, quant_bits=8):
-        super(HessianObserver, self).__init__(quant_bits=quant_bits)
+    def __init__(self, quant_bits=8, alpha=0.0, beta=1.2, n=100, parallel_n=1):
+        super(HessianObserver, self).__init__(
+            quant_bits=quant_bits,
+            alpha=alpha,
+            beta=beta,
+            n=n,
+            parallel_n=parallel_n)
 
     def _get_class(self):
         return HessianObserverLayer
@@ -90,6 +95,18 @@ class HessianObserverLayer(UniformObserver):
         quant_x = paddle.clip(paddle.round(x / s), self._qmin, self._qmax)
         dequant_x = quant_x * s
         return dequant_x
+
+    def cal_min_max(self, inputs):
+        abs_avg_value = paddle.abs(inputs.reshape((inputs.shape[0], -1)))
+        abs_avg_value = float(paddle.mean(paddle.max(abs_avg_value, axis=(1))))
+        return 0, abs_avg_value
+
+    def cal_thresholds(self):
+        """ Compute thresholds for MAX function.
+        """
+        self._min, self._max = self._avg_min, paddle.mean(
+            paddle.to_tensor(self._avg_list))
+        self._scale, self._zero_point = self.cal_scales_zero_points()
 
     def min_value(self) -> float:
         return self._min
