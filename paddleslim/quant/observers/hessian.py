@@ -192,6 +192,7 @@ class HessianConv2D(ConvertibleQuantedLayer):
             self.original_output = output
 
         self.current_iters += 1
+        return output
 
     def _search_hessian(self, input, weight):
         self.activation_quanter.mode = 'quant_search'
