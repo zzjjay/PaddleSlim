@@ -71,7 +71,7 @@ class PACTQuanterLayer(BaseQuanter):
                  name=None):
         super(PACTQuanterLayer, self).__init__()
 
-        self.quanter = quanter(layer)
+        self.quanter = quanter._instance(layer)
         alpha_prefix = ("{}.pact".format(name)
                         if name else 'quant_dequant.pact')
         name = unique_name.generate(alpha_prefix)
