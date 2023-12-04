@@ -21,6 +21,11 @@ from paddle.quantization.factory import QuanterFactory
 from .base_fake_quanter import BaseFakeQuanterLayer
 from .utils import *
 
+def round_ste(x):
+    """
+    Implement Straight-Through Estimator for rounding operation.
+    """
+    return (x.round() - x).detach() + x
 
 class ABQuanter(QuanterFactory):
     def __init__(self,
@@ -30,7 +35,8 @@ class ABQuanter(QuanterFactory):
                  dtype='float32',
                  name=None,
                  windows=[0, 0],
-                 quanter=None):
+                 quanter=None,
+                 fix_alpha=None):
         super().__init__(
             bit_length=bit_length,
             channel_wise=channel_wise,
@@ -38,7 +44,8 @@ class ABQuanter(QuanterFactory):
             dtype=dtype,
             name=name,
             windows=windows,
-            quanter=quanter)
+            quanter=quanter,
+            fix_alpha=fix_alpha)
 
     def _get_class(self):
         return ABQuanterLayer
@@ -53,13 +60,15 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
                  dtype='float32',
                  name=None,
                  windows=[0, 0],
-                 quanter=None):
+                 quanter=None,
+                 fix_alpha=None):
         super().__init__()
         self._bit_length = bit_length
         self._sign = sign
         self._qmin, self._qmax = self.qmin_qmax
         self._current_iters = -1
         self._windows = windows
+        self._fix_alpha = fix_alpha
         if quanter:
             self._quanter = quanter._instance(layer)
             self._scale = self._quanter.scales()
@@ -93,7 +102,7 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
         if self.training:
             alpha = self._update_params(inputs.detach())
             if self._quanter is None:
-                if self._current_iters <= self._windows[1]:
+                if self._fix_alpha is not None or self._current_iters <= self._windows[1]:
                     with paddle.no_grad():
                         qdq_inputs = self._quant_dequant(inputs)
                 else:
@@ -102,7 +111,7 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
             else:
                 if self._current_iters <= self._windows[1]:
                     with paddle.no_grad():
-                        qdq_inputs = self._quanter(inputs)
+                        qdq_inputs = self._quanter(inputs.detach())
                 else:
                     qdq_inputs = self._quanter(inputs)
                 return inputs * (1 - alpha) + alpha * qdq_inputs
@@ -114,14 +123,14 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
 
     def _update_params(self, inputs):
         if self._quanter is None:
-            if self._channel_num > 1:
+            if self._channel_num > 1: # for weight
                 reduce_axis = tuple([
                     i for i in range(len(inputs.shape)) if i != self._quant_axis
                 ])
                 abs_max_values = paddle.max(
                     paddle.abs(inputs), axis=reduce_axis)
                 self._scale.set_value(abs_max_values)
-            else:
+            else: # for act
                 min_value, max_value = avg_min_max(inputs)
                 cur_scale = (max_value - min_value) / (
                     self._qmax - self._qmin) * self._qmax
@@ -130,6 +139,9 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
                 else:
                     self._scale.set_value(
                         cur_scale.unsqueeze(0) * 0.1 + 0.9 * self._scale)
+
+        if self._fix_alpha:
+            return self._fix_alpha
 
         t0, t1 = self._windows
         self._current_iters += 1
@@ -141,22 +153,11 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
             return 1 - math.pow((t1 - self._current_iters) / (t1 - t0), 3)
 
     def _quant_dequant(self, x, update=False):
-        if self._scale.shape[0] == 1:
-            s = self._scale / self._qmax
-        else:
-            weight_shape = x.shape
-            scale = self._scale.reshape([self._scale.shape[0], 1])
-            if len(weight_shape) == 2:
-                scale = scale.repeat_interleave(weight_shape[0], axis=1).t()
-            else:
-                scale = scale.repeat_interleave(
-                    weight_shape[1] * weight_shape[2] * weight_shape[3], axis=1)
-                scale = scale.reshape(weight_shape)
-            s = scale / self._qmax
-        quant_x = paddle.clip(paddle.round(x / s), self._qmin, self._qmax)
+        s = self._scale / self._qmax
+        quant_x = paddle.clip(round_ste(x / s), self._qmin, self._qmax)
         dequant_x = s * quant_x
-        if update:
-            return x + (dequant_x - x).detach()
+        # if update:
+        #     return x + (dequant_x - x).detach()
         return dequant_x
 
     def bit_length(self):
@@ -170,3 +171,4 @@ class ABQuanterLayer(BaseFakeQuanterLayer):
 
     def zero_points(self):
         return None
+
