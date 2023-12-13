@@ -124,6 +124,7 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
     def _collect_gaussian(self, activation):
         min_a = paddle.min(activation.detach())
         max_a = paddle.max(activation.detach())
+        scale = (max_a - min_a) / (self.qmax - self.qmin)
         if len(scale.shape) == 0:
             scale = scale.unsqueeze(0)
         self._scale.set_value(self._scale * 0.9 + 0.1 * scale)
