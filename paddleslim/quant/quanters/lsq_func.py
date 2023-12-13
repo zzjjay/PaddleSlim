@@ -17,7 +17,7 @@ import paddle
 from paddle.autograd import PyLayer
 
 
-def round(x):
+def Round(x):
     sign = paddle.sign(x)
     x = sign * paddle.floor(paddle.abs(x) + 0.5)
     return x
@@ -33,12 +33,12 @@ class LsqFunc(PyLayer):
             weight = weight.reshape((weight.shape[quant_axis], -1))
             weight = weight.transpose((1, 0))
             alpha = paddle.broadcast_to(alpha, weight.shape)
-            quant_w = round(paddle.divide(weight, alpha)).clip(Qn, Qp)
+            quant_w = Round(paddle.divide(weight, alpha)).clip(Qn, Qp)
             quant_w = quant_w * alpha
             quant_w = quant_w.transpose((1, 0))
             quant_w = quant_w.reshape(sizes)
         else:
-            quant_w = round(paddle.divide(weight, alpha)).clip(Qn, Qp)
+            quant_w = Round(paddle.divide(weight, alpha)).clip(Qn, Qp)
             quant_w = quant_w * alpha
         return quant_w
 
@@ -61,15 +61,14 @@ class LsqFunc(PyLayer):
         middle_flag = 1.0 - lower_flag - upper_flag
         if per_channel:
             grad_alpha = (
-                (lower_flag * Qn + upper_flag * Qp + middle_flag * round(q_w) -
+                (lower_flag * Qn + upper_flag * Qp + middle_flag * Round(q_w) -
                  middle_flag * q_w) * grad_weight * g)
             grad_alpha = grad_alpha.reshape((grad_alpha.shape[quant_axis],
                                              -1)).sum(axis=1)
         else:
-            grad_alpha = ((
-                (lower_flag * Qn + upper_flag * Qp + middle_flag * round(q_w)
-                 - middle_flag * q_w) * grad_weight * g).sum().unsqueeze(
-                     axis=0)[0])
+            grad_alpha = (
+                (lower_flag * Qn + upper_flag * Qp + middle_flag * Round(q_w) -
+                 middle_flag * q_w) * grad_weight * g).sum().unsqueeze(axis=0)
         grad_weight = middle_flag * grad_weight
         return grad_weight, grad_alpha
 
@@ -79,7 +78,7 @@ class LsqPlusActFunc(PyLayer):
     def forward(ctx, x, alpha, beta, g, Qn, Qp):
         ctx.save_for_backward(x, alpha, beta)
         ctx.other = g, Qn, Qp
-        quant_x = round(paddle.divide((x - beta), alpha)).clip(Qn, Qp)
+        quant_x = Round(paddle.divide((x - beta), alpha)).clip(Qn, Qp)
         return quant_x * alpha + beta
 
     @staticmethod
@@ -87,13 +86,13 @@ class LsqPlusActFunc(PyLayer):
         x, alpha, beta = ctx.saved_tensor()
         g, Qn, Qp = ctx.other
         q_x = (x - beta) / alpha
-        lower_flag = paddle.cast((q_x < Qn), 'float32')
-        upper_flag = paddle.cast((q_x > Qp), 'float32')
+        lower_flag = paddle.cast((q_x < Qn), q_x.dtype)
+        upper_flag = paddle.cast((q_x > Qp), q_x.dtype)
         middle_flag = 1.0 - lower_flag - upper_flag
-        grad_alpha = ((
-            (lower_flag * Qn + upper_flag * Qp + middle_flag * round(q_x) -
-             middle_flag * q_x) * grad_x * g).sum().unsqueeze(axis=0)[0])
-        grad_beta = (((lower_flag + upper_flag) * grad_x * g).sum().unsqueeze(
-            axis=0)[0])
+        grad_alpha = (
+            (lower_flag * Qn + upper_flag * Qp + middle_flag * Round(q_x) -
+             middle_flag * q_x) * grad_x * g).sum().unsqueeze(axis=0)
+        grad_beta = ((lower_flag + upper_flag) * grad_x * g).sum().unsqueeze(
+            axis=0)
         grad_x = middle_flag * grad_x
         return grad_x, grad_alpha, grad_beta

@@ -21,7 +21,8 @@ from paddle.nn.initializer import Constant
 from paddle.utils import unique_name
 from paddle.quantization.factory import QuanterFactory
 from .base_fake_quanter import BaseFakeQuanterLayer
-from .lsq_func import LsqFunc, LsqPlusActFunc, round
+from .lsq_func import LsqFunc, LsqPlusActFunc, Round
+from .channel_wise_abs_max import CHANNEL_AXIS
 
 
 class ActLSQplusQuanter(QuanterFactory):
@@ -31,10 +32,8 @@ class ActLSQplusQuanter(QuanterFactory):
     Args:
         per_channel(bool): whether layer-wise or channel-wise quantization, where True for layer-wise quantization and False for channel-wise quantization.
         batch_init(int): number of batches that collect Gaussian approximation for the weight distribution in each layer.
-        quant_linear(bool): whether the weight is from Linear.
         dtype(str): data type.
         name(str): the name of the layer.
-        reduce_type(str): the reduce type which is needed when parallel training.
     Examples:
        .. code-block:: python
             from paddle.quantization import QuantConfig
@@ -50,8 +49,6 @@ class ActLSQplusQuanter(QuanterFactory):
                  symmetric=True,
                  per_channel=False,
                  batch_init=20,
-                 quant_linear=False,
-                 reduce_type=None,
                  dtype='float32',
                  name=None):
         super(ActLSQplusQuanter, self).__init__(
@@ -60,8 +57,6 @@ class ActLSQplusQuanter(QuanterFactory):
             symmetric=symmetric,
             per_channel=per_channel,
             batch_init=batch_init,
-            quant_linear=quant_linear,
-            reduce_type=reduce_type,
             dtype=dtype,
             name=name)
 
@@ -77,23 +72,20 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
                  symmetric=True,
                  per_channel=False,
                  batch_init=20,
-                 quant_linear=False,
-                 reduce_type=None,
                  dtype='float32',
                  name=None):
         super(ActLSQplusQuanterLayer, self).__init__()
         self._symmetric = symmetric
         self._per_channel = per_channel
-        self._quant_linear = quant_linear
         self._batch_init = batch_init
         self._name = name
-        self._quant_axis = 1 if quant_linear else 0
-        self._collect_axis = 0 if quant_linear else 1
-        self._reduce_type = reduce_type
-        self.div = 2**self._quant_bits - 1
+        if per_channel:
+            for key in CHANNEL_AXIS.keys():
+                if issubclass(type(layer), key):
+                    self._quant_axis = CHANNEL_AXIS[key]
+                    break
         self.qmin, self.qmax = self.qmin_qmax
 
-        self._current_batch_id = 0
         self._init_state = 0
 
         scale_prefix = ("{}.scale".format(name)
@@ -116,44 +108,37 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
                 shape=[1], attr=beta_attr, dtype='float32')
             self._beta.stop_gradient = False
 
-    def init_params(self, activation):
+    def _init_params(self, activation):
         self.g = paddle.to_tensor(
             1.0 / math.sqrt(activation.numel() * self.qmax))
         min_a = paddle.min(activation.detach())
         max_a = paddle.max(activation.detach())
         scale = (max_a - min_a) / (self.qmax - self.qmin)
-        self._scale.set_value(scale.unsqueeze(0))
+        if len(scale.shape) == 0:
+            scale = scale.unsqueeze(0)
+        self._scale.set_value(scale)
         if not self._symmetric:
             self._beta.set_value(min_a - self._scale * self.qmin)
         self._init_state += 1
 
-    def collect_gaussian(self, activation):
+    def _collect_gaussian(self, activation):
         min_a = paddle.min(activation.detach())
         max_a = paddle.max(activation.detach())
-        self._scale.set_value(self._scale * 0.9 + 0.1 * (max_a - min_a) /
-                              (self.qmax - self.qmin))
+        if len(scale.shape) == 0:
+            scale = scale.unsqueeze(0)
+        self._scale.set_value(self._scale * 0.9 + 0.1 * scale)
         if not self._symmetric:
             self._beta.set_value(self._scale * 0.9 + 0.1 *
                                  (min_a - self._scale * self.qmin))
         self._init_state += 1
 
     def forward(self, activation):
-
-        if self._reduce_type == "max":
-            paddle.distributed.all_reduce(
-                self._scale, op=paddle.distributed.ReduceOp.MAX)
-
-        if not self._symmetric and self._reduce_type == "max":
-            paddle.distributed.all_reduce(
-                self._beta, op=paddle.distributed.ReduceOp.MAX)
-
         if self._init_state == 0:
-            self.init_params(activation)
+            self._init_params(activation)
         elif self._init_state < self._batch_init:
-            self.collect_gaussian(activation)
+            self._collect_gaussian(activation)
 
         activation.stop_gradient = False
-
         if not self._symmetric:
             q_a = LsqPlusActFunc.apply(activation, self._scale, self._beta,
                                        self.g, self.qmin, self.qmax)
@@ -179,8 +164,9 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
 
     def scales(self):
         """ Return output scales.
+        For LSQ, scale = scale / qmax, so the output scales should multiply qmax
         """
-        return self._scale
+        return self._scale * self.qmax
 
     def zero_points(self):
         """ Return output zero points.
@@ -192,7 +178,7 @@ class ActLSQplusQuanterLayer(BaseFakeQuanterLayer):
                 else:
                     self._zero_point = (self.qmax + self.qmin) / 2
             else:
-                self._zero_point = self.qmin - round(self.qmin / self._scale)
+                self._zero_point = self.qmin - Round(self.qmin / self._scale)
                 self._zero_point = paddle.clip(self._zero_point, self.qmin,
                                                self.qmax)
         return self._zero_point
