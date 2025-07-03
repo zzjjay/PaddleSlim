@@ -1,0 +1,311 @@
+from numpy import vectorize
+import paddle
+import paddle.nn.functional as F
+
+import triton.language as tl
+import triton
+
+from .quant import *
+from .pack import *
+
+
+import custom_autotune
+import use_triton_in_paddle; use_triton_in_paddle.make_triton_compatible_with_paddle()
+
+from .utils import *
+
+__all__ = ['gemm_int2_paddle_splitk','gemm_int4_paddle_splitk'
+]
+
+def get_default_config():
+    #4090: default
+    config = triton.Config({'BLOCK_SIZE_M':128, 'BLOCK_SIZE_N':64, 'BLOCK_SIZE_K':32, 'SPLIT_K':1, 'GROUP_SIZE_M':8,},
+                            num_warps=4, num_stages=1)
+
+    return [config]
+def get_wintx_splitk_kernel_config():
+    configs = []
+    for num_stages in [1,2]:
+        for block_m in [16, 32]:
+            for block_n in [32, 64, 128, 256]:#, 256, 512]:
+                for block_k in [32, 64, 128, 256]:#, 256, 512]:
+                    for split_k in [1, 2, 4, 8]:#, 2, 4, 8]:
+                        for warps in [8]:
+                            configs.append(
+                                triton.Config(
+                                {
+                                    "SPLIT_K": split_k,
+                                    "BLOCK_SIZE_M": block_m,
+                                    "BLOCK_SIZE_N": block_n,
+                                    "BLOCK_SIZE_K": block_k,
+                                    "GROUP_SIZE_M": 4,
+                                    "num_stages": num_stages,
+                                    "num_warps": warps,
+                                    # "pre_hook": init_to_zero("c_ptr")
+                                },
+                                )
+                            )
+    return configs
+
+
+
+@custom_autotune.autotune(
+        configs=get_wintx_splitk_kernel_config(),
+        key=["M", "N", "K", "n_bit"],
+        nearest_power_of_two=True,
+        prune_configs_by={
+            "early_config_prune": custom_autotune.kernel_config_pruner,
+            "perf_model": None,
+            "top_k": None,
+        },
+    )
+# @triton.autotune(
+#     configs=get_default_config(),
+#     key=["M", "N", "K"],
+# )
+@triton.jit
+def gemm_kernel(
+    a_ptr, b_ptr, c_ptr,
+    bs_ptr,
+    M, N, K,
+    stride_am, stride_ak,
+    stride_bk, stride_bn,
+    stride_cm, stride_cn,
+    stride_bsk, stride_bsn,
+    group_size: tl.constexpr,
+    n_bit: tl.constexpr,w_mask: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr, SPLIT_K: tl.constexpr=1
+):
+    """
+    assert K % (BLOCK_SIZE_K * SPLIT_K) == 0
+    """
+    pid = tl.program_id(axis=0)
+    pid_sp_k = tl.program_id(axis=1)
+
+    pack_num:tl.constexpr = 32 // n_bit
+    bzp = 1 << (n_bit- 1)
+
+    # swizzle_tile, maybe work...
+    pid_m, pid_n = swizzle_tile(pid, M, N, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M)
+
+    # set A/B offsets
+    offs_am = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
+    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+
+    offs_k = pid_sp_k * BLOCK_SIZE_K + tl.arange(0, BLOCK_SIZE_K)
+    # offs_ak = vectorize_load(offs_k, BLOCK_SIZE_K)
+    offs_ak = offs_k
+
+    offs_bk = pid_sp_k * (BLOCK_SIZE_K // pack_num) + tl.arange(0, BLOCK_SIZE_K // pack_num)
+    # offs_bk = vectorize_load(offs_bk, BLOCK_SIZE_K // pack_num)
+
+    # offs_bzn = (pid_n * BLOCK_SIZE_N // pack_num + tl.arange(0, BLOCK_SIZE_N // pack_num)) % (N // pack_num)
+    # offs_bzn = vectorize_load(offs_bzn, BLOCK_SIZE_N // pack_num)
+
+    group_nums: tl.constexpr = (BLOCK_SIZE_K-1) // group_size + 1
+    offs_bzk = pid_sp_k * BLOCK_SIZE_K // group_size + tl.arange(0, group_nums)
+    # offs_bzk = vectorize_load(offs_bzk, group_nums)
+
+    # set A/B ptrs
+    a_ptrs = a_ptr + offs_am[:, None] * stride_am + offs_ak[None, :] * stride_ak
+    b_ptrs = b_ptr + offs_bk[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+
+    a_mask = offs_am[:, None] < M
+    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+
+    b_shift_bits = ((offs_k[:, None] % pack_num) * n_bit).to(tl.int32)
+    # bzp_shift_bits = ((offs_bn[None, :] % pack_num) * 2).to(tl.int32)
+
+    for k in tl.range(tl.cdiv(K, BLOCK_SIZE_K * SPLIT_K)):#range(0, tl.cdiv(K, BLOCK_SIZE_K * SPLIT_K)):
+
+        bs_ptrs = bs_ptr + ((offs_bzk[:, None] + k * BLOCK_SIZE_K * SPLIT_K // group_size)) * stride_bsk \
+            + offs_bn[None, :] * stride_bsn
+        # bzp_ptrs = bzp_ptr + ((offs_bzk[:, None] + k * BLOCK_SIZE_K * SPLIT_K // group_size)) * stride_bzpk \
+        #     + offs_bzn[None, :] * stride_bzpn
+
+        bs = tl.load(bs_ptrs)
+        # bzp = tl.load(bzp_ptrs)
+        bs = unpack_bs(bs,
+                BLOCK_SIZE_N,BLOCK_SIZE_K,
+                group_nums)
+
+        # bzp = (bzp >> bzp_shift_bits) & 0x3
+
+        b = tl.load(b_ptrs, eviction_policy='evict_first')
+        # dequant
+        b = dequant(b, bs, bzp, b_shift_bits,
+            BLOCK_SIZE_N,BLOCK_SIZE_K,
+            pack_num,w_mask)
+
+        a = tl.load(a_ptrs, mask=a_mask, other=0.0, eviction_policy='evict_last')
+        accumulator += tl.dot(a, b.to(a.dtype))
+
+        a_ptrs += BLOCK_SIZE_K * SPLIT_K * stride_ak
+        b_ptrs += (BLOCK_SIZE_K * SPLIT_K * stride_bk // pack_num)  # assert BLOCK_SIZE_K % 4 == 0
+
+    # You can fuse arbitrary activation functions here
+    # while the accumulator is still in FP32!
+    c = accumulator.to(c_ptr.dtype.element_ty)
+
+
+    # -----------------------------------------------------------
+    # Write back the block of the output matrix C with masks.
+    offs_cm = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    c_ptrs = c_ptr + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
+    if SPLIT_K == 1:
+        tl.store(c_ptrs, c, mask=c_mask)
+    else:
+        tl.atomic_add(c_ptrs, c, mask=c_mask)
+
+
+
+def gemm_int2_paddle_splitk(x, qw, scales, group_size=None,output=None):
+    assert x.is_contiguous(), "A must be contiguous"
+    assert qw.is_contiguous(), "B must be contiguous"
+
+    M,K = x.shape
+    N = qw.shape[1]
+
+    if group_size is None:
+        group_size = K // scales.shape[0]
+
+    if output is None:
+        output = paddle.zeros([M,N], dtype='float32')
+        # output = paddle.empty([M,N], dtype=x.dtype)
+
+    grid = lambda META: (
+        triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']),
+        META['SPLIT_K'],
+    )
+
+    x_stride0,x_stride1 = x.shape[1], 1
+    qw_stride0,qw_stride1 = qw.shape[1], 1
+    scales_stride0,scales_stride1 = scales.shape[1], 1
+    output_stride0,output_stride1 = output.shape[1], 1
+
+    n_bit=2
+    w_mask=0x3
+
+    gemm_kernel[grid](
+        x, qw, output,
+        scales,
+        M, N, K,
+        x_stride0, x_stride1,
+        qw_stride0, qw_stride1,
+        output_stride0, output_stride1,
+        scales_stride0, scales_stride1,
+        group_size,n_bit,w_mask
+        # BLOCK_SIZE_M=128, BLOCK_SIZE_N=16, BLOCK_SIZE_K=32,
+        # GROUP_SIZE_M=8, SPLIT_K=1
+    )
+    return output.cast(x.dtype)
+
+def gemm_int4_paddle_splitk(x, qw, scales, group_size=None,output=None):
+    assert x.is_contiguous(), "A must be contiguous"
+    assert qw.is_contiguous(), "B must be contiguous"
+
+    M,K = x.shape
+    N = qw.shape[1]
+
+    if group_size is None:
+        group_size = K // scales.shape[0]
+
+    if output is None:
+        # output = paddle.zeros([M,N], dtype=x.dtype)
+        output = paddle.zeros([M,N], dtype='float32')
+
+    grid = lambda META: (
+        triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']),
+        META['SPLIT_K'],
+    )
+
+
+    x_stride0,x_stride1 = x.shape[1], 1
+    qw_stride0,qw_stride1 = qw.shape[1], 1
+    scales_stride0,scales_stride1 = scales.shape[1], 1
+    output_stride0,output_stride1 = output.shape[1], 1
+
+    n_bit=4
+    w_mask=0xF
+    gemm_kernel[grid](
+        x, qw, output,
+        scales,
+        M, N, K,
+        x_stride0, x_stride1,
+        qw_stride0, qw_stride1,
+        output_stride0, output_stride1,
+        scales_stride0, scales_stride1,
+        group_size,n_bit,w_mask
+        # BLOCK_SIZE_M=128, BLOCK_SIZE_N=16, BLOCK_SIZE_K=32,
+        # GROUP_SIZE_M=8, SPLIT_K=1
+    )
+    return output.cast(x.dtype)
+
+
+def gemm_unpack_int2_paddle(x, qw, scales, group_size=None,output=None):
+
+    with paddle.no_grad():
+        unpack_w = unpack_col(qw.T, tgt_bit=2).T.cast(x.dtype)
+        dw = dequantize2(unpack_w, scales, bits=2)
+        out2 = x @ dw
+
+    return out2
+def gemm_unpack_int4_paddle(x, qw, scales, group_size=None,output=None):
+    with paddle.no_grad():
+        unpack_w = unpack_col(qw.T, tgt_bit=4).T.cast(x.dtype)
+        # print(unpack_w)
+        # import pdb;pdb.set_trace()
+        dw = dequantize2(unpack_w, scales, bits=4)
+        out2 = x @ dw
+
+    # print('out2')
+    # print(out2)
+
+    return out2
+
+
+if __name__ == '__main__':
+    import os
+    os.environ['TRITON_PRINT_AUTOTUNING'] = '1'
+    from quant import *
+    from pack import *
+    import timeit
+
+    from eval_time import eval_time_paddle
+    paddle.set_device('gpu:2')
+    # inp,w = paddle.randn([4096,4096]).cast('float16'),paddle.randn([4096,1024]).cast('float16')
+    inp,w = paddle.randn([32,7168]).cast('float16'),paddle.randn([7168,4096]).cast('float16')
+    print(f'weight dtype:{w.dtype}')
+    Qw,scale,_ = quantize2(w, asymm=False,group_size=32)
+    # zp = zp.cast('uint8')
+
+    pack_w = pack_col(Qw.T)
+    pack_w = pack_w.T
+    # pack_zp = pack_col(zp)
+
+    pack_w = pack_w.contiguous()
+
+    for _ in range(2):
+        out_triton = gemm_int2_paddle_splitk(inp, pack_w, scale)
+        inp @ dequantize2(unpack_col(pack_w.T).T.cast(w.dtype), scale )
+        inp @ w
+
+
+    latency,_,_ = eval_time_paddle(lambda:gemm_int2_paddle_splitk(inp, pack_w, scale))
+    pp_latency,_,_ = eval_time_paddle(lambda:inp @ dequantize2(unpack_col(pack_w.T).T.cast(w.dtype), scale))
+    pp_fp_latency,_,_ = eval_time_paddle(lambda: inp @ w)
+    print(f'triton int2 gemm:\t{latency}ms\npaddle int2 gemm:\t{pp_latency}ms\nfp gemm:\t{pp_fp_latency}ms')
+
+
+    Qw,scale,_ = quantize2(w, asymm=False,group_size=32, bits=4)
+    # zp = zp.cast('uint8')
+    pack_w = pack_col(Qw.T,tgt_bit=4)
+    pack_w = pack_w.T
+    pack_w = pack_w.contiguous()
+    latency,_,_ = eval_time_paddle(lambda:gemm_int4_paddle_splitk(inp, pack_w, scale))
+    pp_latency,_,_ = eval_time_paddle(lambda:inp @ dequantize2(unpack_col(pack_w.T,tgt_bit=4).T.cast(w.dtype), scale))
+    pp_fp_latency,_,_ = eval_time_paddle(lambda: inp @ w)
+    print(f'triton int2 gemm:\t{latency}ms\npaddle int2 gemm:\t{pp_latency}ms\nfp gemm:\t{pp_fp_latency}ms')
